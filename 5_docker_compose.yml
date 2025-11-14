@@ -1,0 +1,187 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # POSTGRESQL - Database
+  # ============================================================================
+  postgres:
+    image: postgres:14-alpine
+    container_name: fpt-play-db
+    environment:
+      POSTGRES_DB: fpt_play_monitoring
+      POSTGRES_USER: monitor_app
+      POSTGRES_PASSWORD: secure_password_change_me
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitor_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # INFLUXDB - Time-Series Metrics Database
+  # ============================================================================
+  influxdb:
+    image: influxdb:2-alpine
+    container_name: fpt-play-influxdb
+    environment:
+      INFLUXDB_DB: fpt_play_monitoring
+      INFLUXDB_ADMIN_USER: admin
+      INFLUXDB_ADMIN_PASSWORD: admin_password_change_me
+      INFLUXDB_HTTP_AUTH_ENABLED: "true"
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # PROMETHEUS - Metrics Scraper & Storage
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fpt-play-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - prometheus_data:/prometheus
+    networks:
+      - monitoring
+    depends_on:
+      - postgres
+
+  # ============================================================================
+  # GRAFANA - Dashboard & Visualization
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: fpt-play-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin_password_change_me
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+      - influxdb
+
+  # ============================================================================
+  # CMS API - Flask REST API
+  # ============================================================================
+  cms-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.cms-api
+    container_name: fpt-play-cms-api
+    environment:
+      DATABASE_URL: postgresql://monitor_app:secure_password_change_me@postgres:5432/fpt_play_monitoring
+      FLASK_ENV: production
+      FLASK_DEBUG: 0
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./2_cms_api_flask.py:/app/app.py
+    networks:
+      - monitoring
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # PACKAGER MONITOR - Real-time segment monitoring
+  # ============================================================================
+  packager-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.packager-monitor
+    container_name: fpt-play-packager-monitor
+    environment:
+      PACKAGER_URL: http://packager-01.internal
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: your_influxdb_token_here
+      INFLUXDB_ORG: fpt-play
+      INFLUXDB_BUCKET: packager_metrics
+      POLL_INTERVAL: 30
+    volumes:
+      - ./1_packager_monitor_service.py:/app/monitor.py
+      - /var/log/packager-monitor:/var/log
+    networks:
+      - monitoring
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================================
+  # ALERTMANAGER - Alert Management & Routing
+  # ============================================================================
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: fpt-play-alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    networks:
+      - monitoring
+
+  # ============================================================================
+  # NGINX - Reverse Proxy & Load Balancer
+  # ============================================================================
+  nginx:
+    image: nginx:alpine
+    container_name: fpt-play-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    networks:
+      - monitoring
+    depends_on:
+      - cms-api
+      - grafana
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  influxdb_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:

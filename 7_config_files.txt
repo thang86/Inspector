@@ -1,0 +1,355 @@
+# ==============================================================================
+# requirements-cms-api.txt - Flask API Dependencies
+# ==============================================================================
+
+Flask==2.3.3
+Flask-CORS==4.0.0
+Flask-SQLAlchemy==3.0.5
+psycopg2-binary==2.9.7
+SQLAlchemy==2.0.21
+python-dotenv==1.0.0
+gunicorn==21.2.0
+requests==2.31.0
+
+---
+
+# ==============================================================================
+# requirements-packager-monitor.txt - Packager Monitor Dependencies
+# ==============================================================================
+
+requests==2.31.0
+m3u8==3.4.0
+influxdb-client==1.18.0
+python-dotenv==1.0.0
+certifi==2023.7.22
+
+---
+
+# ==============================================================================
+# nginx.conf - Reverse Proxy Configuration
+# ==============================================================================
+
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    client_max_body_size 20M;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml text/javascript application/json application/javascript application/xml+rss application/rss+xml font/truetype font/opentype application/vnd.ms-fontobject image/svg+xml;
+
+    # Upstream backend services
+    upstream cms_api {
+        server cms-api:5000;
+    }
+
+    upstream grafana_backend {
+        server grafana:3000;
+    }
+
+    upstream prometheus_backend {
+        server prometheus:9090;
+    }
+
+    # HTTP to HTTPS redirect
+    server {
+        listen 80;
+        server_name _;
+        return 301 https://$host$request_uri;
+    }
+
+    # HTTPS server
+    server {
+        listen 443 ssl http2;
+        server_name monitoring.fpt.com.vn api.monitor.local grafana.monitor.local;
+
+        # SSL certificates (self-signed or Let's Encrypt)
+        ssl_certificate /etc/nginx/ssl/cert.pem;
+        ssl_certificate_key /etc/nginx/ssl/key.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+
+        # CMS API
+        location /api/v1/ {
+            proxy_pass http://cms_api;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 60s;
+        }
+
+        # Grafana
+        location /grafana/ {
+            proxy_pass http://grafana_backend/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_redirect off;
+        }
+
+        # Prometheus (read-only)
+        location /prometheus/ {
+            proxy_pass http://prometheus_backend/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+
+        # Dashboard UI
+        location / {
+            root /usr/share/nginx/html;
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Health check
+        location /health {
+            access_log off;
+            return 200 "healthy";
+            add_header Content-Type text/plain;
+        }
+    }
+}
+
+---
+
+# ==============================================================================
+# init-db.sql - Database Initialization
+# ==============================================================================
+
+-- Create probes table
+CREATE TABLE probes (
+    probe_id SERIAL PRIMARY KEY,
+    probe_name VARCHAR(50) UNIQUE NOT NULL,
+    layer INT NOT NULL,
+    location VARCHAR(100),
+    ip_address INET NOT NULL,
+    port INT DEFAULT 8443,
+    api_token VARCHAR(255),
+    snmp_enabled BOOLEAN DEFAULT TRUE,
+    snmp_version VARCHAR(10),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create templates table
+CREATE TABLE templates (
+    template_id SERIAL PRIMARY KEY,
+    template_name VARCHAR(50) NOT NULL,
+    description TEXT,
+    codec VARCHAR(20),
+    min_mos DECIMAL(3,1) DEFAULT 2.0,
+    max_mos DECIMAL(3,1) DEFAULT 5.0,
+    loudness_target DECIMAL(5,2) DEFAULT -23.0,
+    loudness_tolerance DECIMAL(5,2) DEFAULT 2.0,
+    macroblocking_threshold DECIMAL(5,2) DEFAULT 0.15,
+    freeze_threshold_ms INT DEFAULT 1000,
+    black_threshold_ms INT DEFAULT 500,
+    pcr_jitter_threshold_ns INT DEFAULT 500,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create channels table
+CREATE TABLE channels (
+    channel_id SERIAL PRIMARY KEY,
+    channel_code VARCHAR(50) UNIQUE NOT NULL,
+    channel_name VARCHAR(200) NOT NULL,
+    channel_type VARCHAR(20) NOT NULL,
+    tier INT NOT NULL,
+    codec VARCHAR(20),
+    resolution VARCHAR(20),
+    fps DECIMAL(5,2),
+    is_4k BOOLEAN DEFAULT FALSE,
+    is_hdr BOOLEAN DEFAULT FALSE,
+    has_atmos BOOLEAN DEFAULT FALSE,
+    probe_id INT NOT NULL REFERENCES probes(probe_id),
+    input_url TEXT,
+    template_id INT NOT NULL REFERENCES templates(template_id),
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create alerts table
+CREATE TABLE alerts (
+    alert_id SERIAL PRIMARY KEY,
+    channel_id INT NOT NULL REFERENCES channels(channel_id),
+    alert_type VARCHAR(50) NOT NULL,
+    severity VARCHAR(20) NOT NULL,
+    message TEXT,
+    acknowledged BOOLEAN DEFAULT FALSE,
+    acknowledged_by VARCHAR(100),
+    acknowledged_at TIMESTAMP,
+    resolved BOOLEAN DEFAULT FALSE,
+    resolved_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indexes
+CREATE INDEX idx_channels_enabled ON channels(enabled);
+CREATE INDEX idx_channels_tier ON channels(tier);
+CREATE INDEX idx_channels_is_4k ON channels(is_4k);
+CREATE INDEX idx_alerts_severity ON alerts(severity);
+CREATE INDEX idx_alerts_resolved ON alerts(resolved);
+CREATE INDEX idx_alerts_channel_id ON alerts(channel_id);
+
+-- Insert sample probes
+INSERT INTO probes (probe_name, layer, location, ip_address) VALUES
+('LIVE-HEADEND-01', 1, 'Headend DC', '10.10.10.21'),
+('LIVE-HEADEND-02', 1, 'Headend DC', '10.10.10.22'),
+('LIVE-PACKAGER-01', 2, 'Packager DC', '10.10.20.21'),
+('LIVE-PACKAGER-02', 2, 'Packager DC', '10.10.20.22'),
+('LIVE-CDNCORE-01', 3, 'CDN Core', '10.10.30.21'),
+('LIVE-EDGE-HN-01', 4, 'Edge HN', '10.20.10.21'),
+('LIVE-EDGE-HCM-01', 4, 'Edge HCM', '10.20.20.21');
+
+-- Insert sample templates
+INSERT INTO templates (template_name, codec, min_mos, max_mos, description) VALUES
+('TPL_LIVE_HD', 'H.264', 3.5, 5.0, 'HD Live Channel Template'),
+('TPL_LIVE_4K_HDR', 'HEVC', 4.0, 5.0, '4K HDR Live Channel Template'),
+('TPL_ABR_OTT', 'HEVC', 3.5, 5.0, 'OTT ABR Streaming Template');
+
+---
+
+# ==============================================================================
+# .env.example - Environment Variables Template
+# ==============================================================================
+
+# Database
+DATABASE_URL=postgresql://monitor_app:secure_password@postgres:5432/fpt_play_monitoring
+
+# InfluxDB
+INFLUXDB_URL=http://influxdb:8086
+INFLUXDB_TOKEN=your_influxdb_token
+INFLUXDB_ORG=fpt-play
+INFLUXDB_BUCKET=packager_metrics
+
+# Packager Monitor
+PACKAGER_URL=http://packager-01.internal
+POLL_INTERVAL=30
+
+# Flask
+FLASK_ENV=production
+FLASK_DEBUG=0
+SECRET_KEY=your_secret_key_here
+
+# Grafana
+GF_SECURITY_ADMIN_PASSWORD=admin_password_change_me
+
+# Alerting
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+ALERT_EMAIL_FROM=monitoring@fpt.com.vn
+SMTP_SERVER=mail.fpt.com.vn
+SMTP_PORT=25
+
+---
+
+# ==============================================================================
+# prometheus.yml - Prometheus Configuration
+# ==============================================================================
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'fpt-play-l2'
+
+rule_files:
+  - "/etc/prometheus/alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'alertmanager:9093'
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'cms-api'
+    static_configs:
+      - targets: ['cms-api:5000']
+
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+
+  - job_name: 'influxdb'
+    static_configs:
+      - targets: ['influxdb:8086']
+
+---
+
+# ==============================================================================
+# alertmanager.yml - Alert Manager Configuration
+# ==============================================================================
+
+global:
+  resolve_timeout: 5m
+  slack_api_url: 'YOUR_SLACK_WEBHOOK_URL'
+
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'cluster']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      continue: true
+
+    - match:
+        severity: major
+      receiver: 'major-alerts'
+
+receivers:
+  - name: 'default'
+    slack_configs:
+      - channel: '#fpt-play-monitoring'
+        title: 'Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+  - name: 'critical-alerts'
+    slack_configs:
+      - channel: '#fpt-play-critical'
+        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    email_configs:
+      - to: 'ops-critical@fpt.com.vn'
+        from: 'monitoring@fpt.com.vn'
+        smarthost: 'mail.fpt.com.vn:25'
+
+  - name: 'major-alerts'
+    slack_configs:
+      - channel: '#fpt-play-alerts'
+        title: '⚠️ MAJOR: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
