@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS probe_inputs (
     is_primary BOOLEAN DEFAULT TRUE,
     enabled BOOLEAN DEFAULT TRUE,
     metadata JSONB,
+    snapshot_url TEXT,
+    last_snapshot_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(probe_id, channel_id, input_name)

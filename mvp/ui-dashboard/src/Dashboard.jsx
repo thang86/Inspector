@@ -908,6 +908,9 @@ const ProbeInputForm = ({ input, channels, probes, onSubmit, onCancel }) => {
 };
 
 const ProbeInputList = ({ inputs, channels, probes, onEdit, onDelete }) => {
+  const [selectedInput, setSelectedInput] = useState(null);
+  const [showMetadata, setShowMetadata] = useState(false);
+
   const getChannelName = (channelId) => {
     const channel = channels.find(c => c.channel_id === channelId);
     return channel ? channel.channel_name : `Channel ${channelId}`;
@@ -918,6 +921,16 @@ const ProbeInputList = ({ inputs, channels, probes, onEdit, onDelete }) => {
     return probe ? probe.probe_name : `Probe ${probeId}`;
   };
 
+  const viewMetadata = (input) => {
+    setSelectedInput(input);
+    setShowMetadata(true);
+  };
+
+  const closeMetadata = () => {
+    setShowMetadata(false);
+    setSelectedInput(null);
+  };
+
   return (
     <div className="inputs-table">
       {inputs.length === 0 ? (
@@ -926,6 +939,7 @@ const ProbeInputList = ({ inputs, channels, probes, onEdit, onDelete }) => {
         <table>
           <thead>
             <tr>
+              <th>Snapshot</th>
               <th>ID</th>
               <th>Name</th>
               <th>Probe</th>
@@ -941,6 +955,31 @@ const ProbeInputList = ({ inputs, channels, probes, onEdit, onDelete }) => {
           <tbody>
             {inputs.map(input => (
               <tr key={input.input_id} className={!input.enabled ? 'disabled' : ''}>
+                <td>
+                  {input.snapshot_url ? (
+                    <div className="snapshot-container">
+                      <img
+                        src={`${API_BASE}${input.snapshot_url}`}
+                        alt={input.input_name}
+                        className="snapshot-thumb"
+                        onClick={() => viewMetadata(input)}
+                        title="Click to view details"
+                      />
+                      <div className="snapshot-time">
+                        {input.last_snapshot_at ? new Date(input.last_snapshot_at).toLocaleString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        }) : ''}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="no-snapshot" title="No snapshot available">
+                      <span>📷</span>
+                    </div>
+                  )}
+                </td>
                 <td>{input.input_id}</td>
                 <td><strong>{input.input_name}</strong></td>
                 <td>{getProbeName(input.probe_id)}</td>
@@ -963,6 +1002,7 @@ const ProbeInputList = ({ inputs, channels, probes, onEdit, onDelete }) => {
                   </span>
                 </td>
                 <td className="actions">
+                  <button className="btn btn-xs" onClick={() => viewMetadata(input)}>Info</button>
                   <button className="btn btn-xs" onClick={() => onEdit(input)}>Edit</button>
                   <button className="btn btn-xs btn-danger" onClick={() => onDelete(input.input_id)}>Delete</button>
                 </td>
@@ -971,6 +1011,170 @@ const ProbeInputList = ({ inputs, channels, probes, onEdit, onDelete }) => {
           </tbody>
         </table>
       )}
+
+      {showMetadata && selectedInput && (
+        <MetadataModal
+          input={selectedInput}
+          onClose={closeMetadata}
+        />
+      )}
+    </div>
+  );
+};
+
+const MetadataModal = ({ input, onClose }) => {
+  const metadata = input.metadata || {};
+  const format = metadata.format || {};
+  const videoStreams = metadata.video_streams || [];
+  const audioStreams = metadata.audio_streams || [];
+
+  const formatBitrate = (bitrate) => {
+    if (!bitrate) return 'N/A';
+    const mbps = bitrate / 1000000;
+    return `${mbps.toFixed(2)} Mbps`;
+  };
+
+  const formatFrameRate = (rate) => {
+    if (!rate) return 'N/A';
+    const parts = rate.split('/');
+    if (parts.length === 2) {
+      const fps = parseInt(parts[0]) / parseInt(parts[1]);
+      return `${fps.toFixed(2)} fps`;
+    }
+    return rate;
+  };
+
+  return (
+    <div className="input-form-overlay" onClick={onClose}>
+      <div className="metadata-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="metadata-header">
+          <h3>{input.input_name} - Stream Metadata</h3>
+          <button className="btn-close" onClick={onClose}>×</button>
+        </div>
+
+        <div className="metadata-content">
+          {input.snapshot_url && (
+            <div className="metadata-snapshot">
+              <img
+                src={`${API_BASE}${input.snapshot_url}`}
+                alt={input.input_name}
+                className="snapshot-large"
+              />
+              <p className="snapshot-caption">
+                Captured: {input.last_snapshot_at ? new Date(input.last_snapshot_at).toLocaleString() : 'Unknown'}
+              </p>
+            </div>
+          )}
+
+          <div className="metadata-section">
+            <h4>Stream Information</h4>
+            <div className="metadata-grid">
+              <div className="metadata-item">
+                <span className="label">Input URL:</span>
+                <span className="value">{input.input_url}</span>
+              </div>
+              <div className="metadata-item">
+                <span className="label">Input Type:</span>
+                <span className="value">{input.input_type}</span>
+              </div>
+              <div className="metadata-item">
+                <span className="label">Format:</span>
+                <span className="value">{format.format_long_name || format.format_name || 'Unknown'}</span>
+              </div>
+              <div className="metadata-item">
+                <span className="label">Overall Bitrate:</span>
+                <span className="value">{formatBitrate(format.bit_rate)}</span>
+              </div>
+              <div className="metadata-item">
+                <span className="label">Total Streams:</span>
+                <span className="value">{format.nb_streams || 0}</span>
+              </div>
+            </div>
+          </div>
+
+          {videoStreams.length > 0 && (
+            <div className="metadata-section">
+              <h4>Video Streams ({videoStreams.length})</h4>
+              {videoStreams.map((stream, idx) => (
+                <div key={idx} className="stream-info">
+                  <div className="metadata-grid">
+                    <div className="metadata-item">
+                      <span className="label">Codec:</span>
+                      <span className="value">{stream.codec_long_name || stream.codec_name}</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Resolution:</span>
+                      <span className="value">{stream.width}x{stream.height}</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Frame Rate:</span>
+                      <span className="value">{formatFrameRate(stream.r_frame_rate)}</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Pixel Format:</span>
+                      <span className="value">{stream.pix_fmt}</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Profile:</span>
+                      <span className="value">{stream.profile}</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Aspect Ratio:</span>
+                      <span className="value">{stream.display_aspect_ratio}</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Bitrate:</span>
+                      <span className="value">{formatBitrate(stream.bit_rate)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {audioStreams.length > 0 && (
+            <div className="metadata-section">
+              <h4>Audio Streams ({audioStreams.length})</h4>
+              {audioStreams.map((stream, idx) => (
+                <div key={idx} className="stream-info">
+                  <div className="metadata-grid">
+                    <div className="metadata-item">
+                      <span className="label">Codec:</span>
+                      <span className="value">{stream.codec_long_name || stream.codec_name}</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Sample Rate:</span>
+                      <span className="value">{stream.sample_rate} Hz</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Channels:</span>
+                      <span className="value">{stream.channels} ({stream.channel_layout})</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Sample Format:</span>
+                      <span className="value">{stream.sample_fmt}</span>
+                    </div>
+                    <div className="metadata-item">
+                      <span className="label">Bitrate:</span>
+                      <span className="value">{formatBitrate(stream.bit_rate)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!metadata.format && !metadata.video_streams && (
+            <div className="metadata-section">
+              <p className="no-data">No metadata available yet. The snapshot service will collect metadata automatically.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="metadata-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Close</button>
+        </div>
+      </div>
     </div>
   );
 };

@@ -106,8 +106,11 @@ services:
       DATABASE_URL: postgresql://inspector_app:${POSTGRES_PASSWORD:-change_me_postgres}@postgres:5432/inspector_monitoring
       FLASK_ENV: production
       FLASK_DEBUG: 0
+      SNAPSHOT_DIR: /var/snapshots
     ports:
       - "5000:5000"
+    volumes:
+      - snapshot_data:/var/snapshots
     networks:
       - inspector
     depends_on:
@@ -194,6 +197,28 @@ services:
     restart: unless-stopped
 
   # ============================================================================
+  # SNAPSHOT SERVICE - Stream Snapshot & Metadata Extraction
+  # ============================================================================
+  snapshot-service:
+    build:
+      context: ../snapshot-service
+      dockerfile: Dockerfile
+    container_name: inspector-snapshot-service
+    environment:
+      SNAPSHOT_DIR: /var/snapshots
+      CMS_API_URL: http://cms-api:5000/api/v1
+      SNAPSHOT_INTERVAL: ${SNAPSHOT_INTERVAL:-300}
+      SNAPSHOT_QUALITY: ${SNAPSHOT_QUALITY:-2}
+    volumes:
+      - snapshot_data:/var/snapshots
+      - snapshot_logs:/var/log
+    networks:
+      - inspector
+    depends_on:
+      - cms-api
+    restart: unless-stopped
+
+  # ============================================================================
   # UI DASHBOARD - React Frontend
   # ============================================================================
   ui-dashboard:
@@ -240,3 +265,5 @@ volumes:
   monitor_logs:
   cdn_logs:
   mpegts_logs:
+  snapshot_data:
+  snapshot_logs:

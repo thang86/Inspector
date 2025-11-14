@@ -4,7 +4,7 @@ FPT Play - CMS API (Channel Management System)
 REST API for channel configuration, templates, alert management
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
@@ -160,6 +160,8 @@ class ProbeInput(db.Model):
     is_primary = db.Column(db.Boolean, default=True)
     enabled = db.Column(db.Boolean, default=True)
     metadata = db.Column(db.JSON)
+    snapshot_url = db.Column(db.Text)
+    last_snapshot_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -181,6 +183,8 @@ class ProbeInput(db.Model):
             'is_primary': self.is_primary,
             'enabled': self.enabled,
             'metadata': self.metadata,
+            'snapshot_url': self.snapshot_url,
+            'last_snapshot_at': self.last_snapshot_at.isoformat() if self.last_snapshot_at else None,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }
@@ -717,6 +721,87 @@ def get_channel_inputs(channel_id):
 
 
 # ============================================================================
+# SNAPSHOT & METADATA ENDPOINTS
+# ============================================================================
+
+@app.route('/api/v1/probe-inputs/<int:input_id>/snapshot', methods=['POST'])
+def update_input_snapshot(input_id):
+    """Update snapshot and metadata for probe input (called by snapshot service)"""
+    probe_input = ProbeInput.query.get(input_id)
+
+    if not probe_input:
+        return jsonify({'status': 'error', 'message': 'Probe input not found'}), 404
+
+    data = request.get_json()
+
+    try:
+        if 'snapshot_url' in data:
+            probe_input.snapshot_url = data['snapshot_url']
+
+        if 'last_snapshot_at' in data:
+            # Parse ISO format datetime string
+            from dateutil import parser as date_parser
+            probe_input.last_snapshot_at = date_parser.parse(data['last_snapshot_at'])
+
+        if 'metadata' in data:
+            # Merge new metadata with existing
+            if probe_input.metadata:
+                probe_input.metadata.update(data['metadata'])
+            else:
+                probe_input.metadata = data['metadata']
+
+        probe_input.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        logger.info(f"Updated snapshot for probe input: {input_id}")
+
+        return jsonify({
+            'status': 'ok',
+            'message': 'Snapshot updated successfully',
+            'input': probe_input.to_dict()
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating snapshot: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/v1/probe-inputs/<int:input_id>/snapshot', methods=['GET'])
+def get_input_snapshot(input_id):
+    """Get snapshot URL for probe input"""
+    probe_input = ProbeInput.query.get(input_id)
+
+    if not probe_input:
+        return jsonify({'status': 'error', 'message': 'Probe input not found'}), 404
+
+    return jsonify({
+        'status': 'ok',
+        'input_id': input_id,
+        'snapshot_url': probe_input.snapshot_url,
+        'last_snapshot_at': probe_input.last_snapshot_at.isoformat() if probe_input.last_snapshot_at else None
+    })
+
+
+@app.route('/api/v1/probe-inputs/<int:input_id>/metadata', methods=['GET'])
+def get_input_metadata(input_id):
+    """Get detailed metadata for probe input"""
+    probe_input = ProbeInput.query.get(input_id)
+
+    if not probe_input:
+        return jsonify({'status': 'error', 'message': 'Probe input not found'}), 404
+
+    return jsonify({
+        'status': 'ok',
+        'input_id': input_id,
+        'input_name': probe_input.input_name,
+        'input_url': probe_input.input_url,
+        'metadata': probe_input.metadata or {},
+        'last_snapshot_at': probe_input.last_snapshot_at.isoformat() if probe_input.last_snapshot_at else None
+    })
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -740,6 +825,21 @@ def health_check():
             'timestamp': datetime.utcnow().isoformat(),
             'error': str(e)
         }), 500
+
+# ============================================================================
+# STATIC FILE SERVING - Snapshot Images
+# ============================================================================
+
+SNAPSHOT_DIR = os.getenv('SNAPSHOT_DIR', '/var/snapshots')
+
+@app.route('/api/v1/snapshots/<path:filename>')
+def serve_snapshot(filename):
+    """Serve snapshot image files"""
+    try:
+        return send_from_directory(SNAPSHOT_DIR, filename)
+    except Exception as e:
+        logger.error(f"Error serving snapshot {filename}: {e}")
+        return jsonify({'status': 'error', 'message': 'Snapshot not found'}), 404
 
 # ============================================================================
 # ERROR HANDLERS
