@@ -17,6 +17,11 @@ import m3u8
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 import hashlib
+import socket
+import struct
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import os
 
 # ============================================================================
 # CONFIGURATION
@@ -39,22 +44,35 @@ class MonitorConfig:
     influxdb_token: str = "your_influxdb_token"
     influxdb_org: str = "fpt-play"
     influxdb_bucket: str = "packager_metrics"
-    
-    # Channels to monitor
+
+    # Database
+    database_url: str = None
+
+    # Channels to monitor (legacy, will be replaced by database inputs)
     channels: List[str] = None
-    
+
     # Thresholds
     segment_duration_target: float = 6.0
     segment_duration_tolerance: float = 0.1  # 10%
     min_segment_size: int = 50000  # 50KB
     max_download_time: float = 2.0  # 2 seconds
     min_playlist_segments: int = 3
-    
+
+    # UDP/MPEGTS monitoring
+    udp_timeout: float = 5.0  # seconds
+    udp_buffer_size: int = 188 * 7  # TS packets (188 bytes each)
+    min_ts_packets: int = 100  # minimum packets to receive for valid probe
+
     # Polling
     poll_interval: int = 30  # seconds
     max_workers: int = 10
-    
+
     def __post_init__(self):
+        if self.database_url is None:
+            self.database_url = os.getenv(
+                'DATABASE_URL',
+                'postgresql://monitor_app:secure_password@db.monitor.local/fpt_play_monitoring'
+            )
         if self.channels is None:
             self.channels = [
                 f"CH_TV_HD_{i:03d}" for i in range(1, 51)
@@ -96,6 +114,34 @@ class PlaylistValidation:
     errors: List[str]
     last_updated: datetime
 
+
+@dataclass
+class InputSource:
+    input_id: int
+    input_name: str
+    input_url: str
+    input_type: str  # MPEGTS_UDP, HTTP, HLS, etc.
+    input_protocol: str
+    input_port: int
+    channel_id: int
+    channel_name: str
+    probe_id: int
+    is_primary: bool
+    enabled: bool
+
+
+@dataclass
+class UDPProbeMetric:
+    input_id: int
+    input_name: str
+    packets_received: int
+    bytes_received: int
+    duration_sec: float
+    bitrate_mbps: float
+    is_valid: bool
+    errors: List[str]
+    timestamp: datetime
+
 # ============================================================================
 # PACKAGER MONITOR SERVICE
 # ============================================================================
@@ -111,11 +157,79 @@ class PackagerMonitor:
         self.write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
         self.executor = ThreadPoolExecutor(max_workers=config.max_workers)
         self.metric_cache = {}  # Store last metrics for comparison
+        self.db_conn = None
+        self._connect_db()
     
+    def _connect_db(self):
+        """Connect to PostgreSQL database"""
+        try:
+            self.db_conn = psycopg2.connect(self.config.database_url)
+            logger.info("Connected to database successfully")
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {e}")
+            self.db_conn = None
+
+    def _fetch_inputs_from_db(self) -> List[InputSource]:
+        """Fetch enabled inputs from database"""
+        if not self.db_conn:
+            logger.warning("No database connection, using legacy channel list")
+            return []
+
+        try:
+            with self.db_conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT
+                        i.input_id,
+                        i.input_name,
+                        i.input_url,
+                        i.input_type,
+                        i.input_protocol,
+                        i.input_port,
+                        i.channel_id,
+                        c.channel_name,
+                        i.probe_id,
+                        i.is_primary,
+                        i.enabled
+                    FROM inputs i
+                    LEFT JOIN channels c ON i.channel_id = c.channel_id
+                    WHERE i.enabled = true
+                    ORDER BY i.input_id
+                """)
+                rows = cursor.fetchall()
+
+                inputs = []
+                for row in rows:
+                    inputs.append(InputSource(
+                        input_id=row['input_id'],
+                        input_name=row['input_name'],
+                        input_url=row['input_url'],
+                        input_type=row['input_type'],
+                        input_protocol=row['input_protocol'],
+                        input_port=row['input_port'],
+                        channel_id=row['channel_id'],
+                        channel_name=row['channel_name'],
+                        probe_id=row['probe_id'],
+                        is_primary=row['is_primary'],
+                        enabled=row['enabled']
+                    ))
+
+                logger.info(f"Fetched {len(inputs)} inputs from database")
+                return inputs
+
+        except Exception as e:
+            logger.error(f"Error fetching inputs from database: {e}")
+            # Reconnect on error
+            try:
+                self.db_conn.close()
+            except:
+                pass
+            self._connect_db()
+            return []
+
     def run(self):
         """Main monitoring loop"""
         logger.info("Starting Packager Monitor Service")
-        
+
         try:
             while True:
                 try:
@@ -127,21 +241,192 @@ class PackagerMonitor:
         except KeyboardInterrupt:
             logger.info("Shutting down...")
             self.executor.shutdown(wait=True)
+            if self.db_conn:
+                self.db_conn.close()
     
     def monitor_cycle(self):
         """Single monitoring cycle"""
-        logger.debug(f"Starting monitor cycle for {len(self.config.channels)} channels")
-        
+        # Fetch inputs from database
+        inputs = self._fetch_inputs_from_db()
+
+        if not inputs:
+            logger.warning("No inputs found in database, falling back to legacy channel monitoring")
+            logger.debug(f"Starting monitor cycle for {len(self.config.channels)} channels")
+
+            futures = {}
+            for channel_id in self.config.channels:
+                future = self.executor.submit(self.monitor_channel, channel_id)
+                futures[future] = channel_id
+
+            for future in futures:
+                try:
+                    future.result(timeout=60)
+                except Exception as e:
+                    logger.error(f"Error monitoring {futures[future]}: {e}")
+            return
+
+        logger.debug(f"Starting monitor cycle for {len(inputs)} inputs")
+
         futures = {}
-        for channel_id in self.config.channels:
-            future = self.executor.submit(self.monitor_channel, channel_id)
-            futures[future] = channel_id
-        
+        for input_source in inputs:
+            future = self.executor.submit(self.monitor_input, input_source)
+            futures[future] = input_source.input_name
+
         for future in futures:
             try:
                 future.result(timeout=60)
             except Exception as e:
                 logger.error(f"Error monitoring {futures[future]}: {e}")
+
+    def monitor_input(self, input_source: InputSource):
+        """Monitor single input based on its type"""
+        try:
+            if input_source.input_type == 'MPEGTS_UDP':
+                self._probe_mpegts_udp(input_source)
+            elif input_source.input_type in ['HTTP', 'HLS']:
+                # Use existing HLS monitoring for HTTP/HLS inputs
+                self.monitor_channel(input_source.channel_name or f"input_{input_source.input_id}")
+            else:
+                logger.warning(f"Unsupported input type: {input_source.input_type} for {input_source.input_name}")
+
+        except Exception as e:
+            logger.error(f"Error monitoring input {input_source.input_name}: {e}", exc_info=True)
+
+    def _probe_mpegts_udp(self, input_source: InputSource):
+        """Probe MPEGTS UDP input by joining multicast group and receiving packets"""
+        errors = []
+        packets_received = 0
+        bytes_received = 0
+        is_valid = False
+
+        # Parse UDP URL (e.g., udp://225.3.3.42:30130)
+        try:
+            url_parts = input_source.input_url.replace('udp://', '').split(':')
+            if len(url_parts) != 2:
+                raise ValueError(f"Invalid UDP URL format: {input_source.input_url}")
+
+            multicast_group = url_parts[0]
+            port = int(url_parts[1])
+
+        except Exception as e:
+            errors.append(f"Failed to parse UDP URL: {e}")
+            logger.error(f"Error parsing UDP URL for {input_source.input_name}: {e}")
+            self._push_udp_probe_metric(UDPProbeMetric(
+                input_id=input_source.input_id,
+                input_name=input_source.input_name,
+                packets_received=0,
+                bytes_received=0,
+                duration_sec=0,
+                bitrate_mbps=0,
+                is_valid=False,
+                errors=errors,
+                timestamp=datetime.utcnow()
+            ))
+            return
+
+        # Create UDP socket
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+            # Bind to the port
+            sock.bind(('', port))
+
+            # Join multicast group
+            mreq = struct.pack("4sl", socket.inet_aton(multicast_group), socket.INADDR_ANY)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+            # Set timeout
+            sock.settimeout(self.config.udp_timeout)
+
+            logger.debug(f"Probing UDP stream {input_source.input_name} at {multicast_group}:{port}")
+
+            start_time = time.time()
+            ts_packet_count = 0
+
+            # Receive packets for the duration of the timeout
+            while True:
+                try:
+                    data, addr = sock.recvfrom(self.config.udp_buffer_size)
+                    packets_received += 1
+                    bytes_received += len(data)
+
+                    # Validate TS packets (each should be 188 bytes and start with 0x47)
+                    if len(data) % 188 == 0:
+                        for i in range(0, len(data), 188):
+                            if data[i] == 0x47:  # TS sync byte
+                                ts_packet_count += 1
+
+                    # Stop after receiving minimum packets or timeout
+                    if packets_received >= self.config.min_ts_packets:
+                        break
+
+                except socket.timeout:
+                    break
+                except Exception as e:
+                    errors.append(f"Error receiving packets: {e}")
+                    break
+
+            duration = time.time() - start_time
+
+            # Calculate bitrate
+            if duration > 0:
+                bitrate_mbps = (bytes_received * 8) / (duration * 1_000_000)
+            else:
+                bitrate_mbps = 0
+
+            # Validate results
+            if packets_received >= self.config.min_ts_packets and ts_packet_count > 0:
+                is_valid = True
+                logger.info(
+                    f"UDP probe successful for {input_source.input_name}: "
+                    f"{packets_received} packets, {bytes_received} bytes, "
+                    f"{ts_packet_count} TS packets, {bitrate_mbps:.2f} Mbps"
+                )
+            else:
+                errors.append(
+                    f"Insufficient packets received: {packets_received} < {self.config.min_ts_packets}"
+                )
+                logger.warning(
+                    f"UDP probe failed for {input_source.input_name}: "
+                    f"{packets_received} packets received"
+                )
+
+            # Push metrics
+            self._push_udp_probe_metric(UDPProbeMetric(
+                input_id=input_source.input_id,
+                input_name=input_source.input_name,
+                packets_received=packets_received,
+                bytes_received=bytes_received,
+                duration_sec=duration,
+                bitrate_mbps=bitrate_mbps,
+                is_valid=is_valid,
+                errors=errors,
+                timestamp=datetime.utcnow()
+            ))
+
+        except Exception as e:
+            errors.append(f"UDP probe error: {e}")
+            logger.error(f"Error probing UDP stream {input_source.input_name}: {e}", exc_info=True)
+            self._push_udp_probe_metric(UDPProbeMetric(
+                input_id=input_source.input_id,
+                input_name=input_source.input_name,
+                packets_received=packets_received,
+                bytes_received=bytes_received,
+                duration_sec=0,
+                bitrate_mbps=0,
+                is_valid=False,
+                errors=errors,
+                timestamp=datetime.utcnow()
+            ))
+
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except:
+                    pass
     
     def monitor_channel(self, channel_id: str):
         """Monitor single channel"""
@@ -414,7 +699,7 @@ class PackagerMonitor:
                 .tag("channel", channel_id) \
                 .field("error_message", error_msg) \
                 .time(datetime.utcnow())
-            
+
             self.write_api.write(
                 bucket=self.config.influxdb_bucket,
                 org=self.config.influxdb_org,
@@ -422,6 +707,31 @@ class PackagerMonitor:
             )
         except Exception as e:
             logger.error(f"Error pushing channel error: {e}")
+
+    def _push_udp_probe_metric(self, metric: UDPProbeMetric):
+        """Push UDP probe metric to InfluxDB"""
+        try:
+            point = Point("udp_probe_metric") \
+                .tag("input_id", str(metric.input_id)) \
+                .tag("input_name", metric.input_name) \
+                .field("packets_received", metric.packets_received) \
+                .field("bytes_received", metric.bytes_received) \
+                .field("duration_sec", metric.duration_sec) \
+                .field("bitrate_mbps", metric.bitrate_mbps) \
+                .field("is_valid", int(metric.is_valid)) \
+                .field("error_count", len(metric.errors)) \
+                .time(metric.timestamp)
+
+            self.write_api.write(
+                bucket=self.config.influxdb_bucket,
+                org=self.config.influxdb_org,
+                record=point
+            )
+
+            logger.debug(f"Pushed UDP probe metric for {metric.input_name}: {metric.bitrate_mbps:.2f} Mbps")
+
+        except Exception as e:
+            logger.error(f"Error pushing UDP probe metric: {e}")
 
 # ============================================================================
 # MAIN

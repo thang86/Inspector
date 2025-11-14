@@ -15,6 +15,7 @@ const Dashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [channels, setChannels] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [inputs, setInputs] = useState([]);
   const [metrics, setMetrics] = useState({});
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState({ tier: null, is_4k: null });
@@ -22,9 +23,11 @@ const Dashboard = () => {
   useEffect(() => {
     fetchChannels();
     fetchActiveAlerts();
+    fetchInputs();
     const interval = setInterval(() => {
       fetchChannels();
       fetchActiveAlerts();
+      fetchInputs();
     }, 30000); // Refresh every 30 seconds
 
     return () => clearInterval(interval);
@@ -54,6 +57,16 @@ const Dashboard = () => {
       setAlerts(data.alerts || []);
     } catch (error) {
       console.error('Error fetching alerts:', error);
+    }
+  }, []);
+
+  const fetchInputs = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/inputs`);
+      const data = await response.json();
+      setInputs(data.inputs || []);
+    } catch (error) {
+      console.error('Error fetching inputs:', error);
     }
   }, []);
 
@@ -90,25 +103,31 @@ const Dashboard = () => {
       <Header />
       
       <div className="tabs">
-        <button 
+        <button
           className={`tab ${activeTab === 'overview' ? 'active' : ''}`}
           onClick={() => setActiveTab('overview')}
         >
           Overview
         </button>
-        <button 
+        <button
           className={`tab ${activeTab === 'channels' ? 'active' : ''}`}
           onClick={() => setActiveTab('channels')}
         >
           Channels
         </button>
-        <button 
+        <button
+          className={`tab ${activeTab === 'inputs' ? 'active' : ''}`}
+          onClick={() => setActiveTab('inputs')}
+        >
+          Inputs
+        </button>
+        <button
           className={`tab ${activeTab === 'alerts' ? 'active' : ''}`}
           onClick={() => setActiveTab('alerts')}
         >
           Alerts ({alerts.length})
         </button>
-        <button 
+        <button
           className={`tab ${activeTab === 'metrics' ? 'active' : ''}`}
           onClick={() => setActiveTab('metrics')}
         >
@@ -118,24 +137,32 @@ const Dashboard = () => {
 
       <div className="tab-content">
         {activeTab === 'overview' && <OverviewTab channels={channels} alerts={alerts} />}
-        
+
         {activeTab === 'channels' && (
-          <ChannelsTab 
-            channels={channels} 
+          <ChannelsTab
+            channels={channels}
             loading={loading}
             filter={filter}
             onFilterChange={setFilter}
           />
         )}
-        
+
+        {activeTab === 'inputs' && (
+          <InputsTab
+            inputs={inputs}
+            loading={loading}
+            onRefresh={fetchInputs}
+          />
+        )}
+
         {activeTab === 'alerts' && (
-          <AlertsTab 
+          <AlertsTab
             alerts={alerts}
             onAcknowledge={acknowledgeAlert}
             onResolve={resolveAlert}
           />
         )}
-        
+
         {activeTab === 'metrics' && <MetricsTab />}
       </div>
     </div>
@@ -558,6 +585,429 @@ const MetricsTab = () => {
             <Line type="monotone" dataKey="bitrate" stroke="#ffc658" />
           </LineChart>
         </ResponsiveContainer>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// INPUTS TAB
+// ============================================================================
+
+const InputsTab = ({ inputs, loading, onRefresh }) => {
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showInfoModal, setShowInfoModal] = useState(false);
+  const [selectedInput, setSelectedInput] = useState(null);
+
+  const handleEdit = (input) => {
+    setSelectedInput(input);
+    setShowEditModal(true);
+  };
+
+  const handleInfo = (input) => {
+    setSelectedInput(input);
+    setShowInfoModal(true);
+  };
+
+  const handleDelete = async (inputId) => {
+    if (!confirm('Are you sure you want to delete this input?')) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/inputs/${inputId}`, {
+        method: 'DELETE'
+      });
+      if (response.ok) {
+        onRefresh();
+      } else {
+        alert('Failed to delete input');
+      }
+    } catch (error) {
+      console.error('Error deleting input:', error);
+      alert('Error deleting input');
+    }
+  };
+
+  return (
+    <div className="inputs-tab">
+      <div className="inputs-header">
+        <h2>Probe Inputs</h2>
+        <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
+          + Add New Input
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="loading">Loading inputs...</div>
+      ) : (
+        <div className="inputs-table-container">
+          {inputs.length === 0 ? (
+            <p className="no-data">No inputs found</p>
+          ) : (
+            <table className="inputs-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Input Name</th>
+                  <th>Channel Name</th>
+                  <th>Type</th>
+                  <th>URL</th>
+                  <th>Port</th>
+                  <th>Probe ID</th>
+                  <th>Primary</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inputs.map(input => (
+                  <tr key={input.input_id}>
+                    <td>{input.input_id}</td>
+                    <td><strong>{input.input_name}</strong></td>
+                    <td>{input.channel_name || 'N/A'}</td>
+                    <td><span className="badge type-badge">{input.input_type}</span></td>
+                    <td className="url-cell">{input.input_url}</td>
+                    <td>{input.input_port || 'N/A'}</td>
+                    <td>{input.probe_id}</td>
+                    <td>{input.is_primary ? 'Yes' : 'No'}</td>
+                    <td>
+                      <span className={`badge ${input.enabled ? 'badge-success' : 'badge-danger'}`}>
+                        {input.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </td>
+                    <td className="actions">
+                      <button className="btn btn-xs btn-info" onClick={() => handleInfo(input)}>
+                        Info
+                      </button>
+                      <button className="btn btn-xs btn-primary" onClick={() => handleEdit(input)}>
+                        Edit
+                      </button>
+                      <button className="btn btn-xs btn-danger" onClick={() => handleDelete(input.input_id)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {showAddModal && (
+        <InputFormModal
+          onClose={() => setShowAddModal(false)}
+          onSuccess={() => {
+            setShowAddModal(false);
+            onRefresh();
+          }}
+        />
+      )}
+
+      {showEditModal && selectedInput && (
+        <InputFormModal
+          input={selectedInput}
+          onClose={() => {
+            setShowEditModal(false);
+            setSelectedInput(null);
+          }}
+          onSuccess={() => {
+            setShowEditModal(false);
+            setSelectedInput(null);
+            onRefresh();
+          }}
+        />
+      )}
+
+      {showInfoModal && selectedInput && (
+        <InputInfoModal
+          input={selectedInput}
+          onClose={() => {
+            setShowInfoModal(false);
+            setSelectedInput(null);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
+// INPUT FORM MODAL (Add/Edit)
+// ============================================================================
+
+const InputFormModal = ({ input, onClose, onSuccess }) => {
+  const isEdit = !!input;
+  const [formData, setFormData] = useState(input || {
+    input_name: '',
+    input_url: '',
+    input_type: 'MPEGTS_UDP',
+    input_protocol: 'udp',
+    input_port: '',
+    channel_id: '',
+    probe_id: 1,
+    is_primary: true,
+    enabled: true,
+    bitrate_mbps: ''
+  });
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    const url = isEdit ? `${API_BASE}/inputs/${input.input_id}` : `${API_BASE}/inputs`;
+    const method = isEdit ? 'PUT' : 'POST';
+
+    try {
+      const response = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      if (response.ok) {
+        onSuccess();
+      } else {
+        const data = await response.json();
+        alert(`Error: ${data.message}`);
+      }
+    } catch (error) {
+      console.error('Error saving input:', error);
+      alert('Error saving input');
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{isEdit ? 'Edit Input' : 'Add New Input'}</h3>
+          <button className="close-btn" onClick={onClose}>&times;</button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label>Input Name *</label>
+            <input
+              type="text"
+              value={formData.input_name}
+              onChange={(e) => setFormData({ ...formData, input_name: e.target.value })}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Input URL *</label>
+            <input
+              type="text"
+              value={formData.input_url}
+              onChange={(e) => setFormData({ ...formData, input_url: e.target.value })}
+              placeholder="udp://225.3.3.42:30130"
+              required
+            />
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>Input Type *</label>
+              <select
+                value={formData.input_type}
+                onChange={(e) => setFormData({ ...formData, input_type: e.target.value })}
+                required
+              >
+                <option value="MPEGTS_UDP">MPEGTS_UDP</option>
+                <option value="HTTP">HTTP</option>
+                <option value="HLS">HLS</option>
+                <option value="RTMP">RTMP</option>
+                <option value="SRT">SRT</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Protocol</label>
+              <select
+                value={formData.input_protocol || ''}
+                onChange={(e) => setFormData({ ...formData, input_protocol: e.target.value })}
+              >
+                <option value="">Auto</option>
+                <option value="udp">UDP</option>
+                <option value="http">HTTP</option>
+                <option value="rtmp">RTMP</option>
+                <option value="srt">SRT</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Port</label>
+              <input
+                type="number"
+                value={formData.input_port || ''}
+                onChange={(e) => setFormData({ ...formData, input_port: parseInt(e.target.value) || '' })}
+              />
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>Channel ID</label>
+              <input
+                type="number"
+                value={formData.channel_id || ''}
+                onChange={(e) => setFormData({ ...formData, channel_id: parseInt(e.target.value) || '' })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Probe ID *</label>
+              <input
+                type="number"
+                value={formData.probe_id}
+                onChange={(e) => setFormData({ ...formData, probe_id: parseInt(e.target.value) })}
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Bitrate (Mbps)</label>
+              <input
+                type="number"
+                step="0.1"
+                value={formData.bitrate_mbps || ''}
+                onChange={(e) => setFormData({ ...formData, bitrate_mbps: parseFloat(e.target.value) || '' })}
+              />
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group checkbox">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={formData.is_primary}
+                  onChange={(e) => setFormData({ ...formData, is_primary: e.target.checked })}
+                />
+                Primary Input
+              </label>
+            </div>
+
+            <div className="form-group checkbox">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={formData.enabled}
+                  onChange={(e) => setFormData({ ...formData, enabled: e.target.checked })}
+                />
+                Enabled
+              </label>
+            </div>
+          </div>
+
+          <div className="modal-footer">
+            <button type="button" className="btn btn-secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary">
+              {isEdit ? 'Update' : 'Create'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// INPUT INFO MODAL
+// ============================================================================
+
+const InputInfoModal = ({ input, onClose }) => {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-info" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Input Information: {input.input_name}</h3>
+          <button className="close-btn" onClick={onClose}>&times;</button>
+        </div>
+
+        <div className="modal-body">
+          <div className="info-grid">
+            <div className="info-item">
+              <strong>Input ID:</strong>
+              <span>{input.input_id}</span>
+            </div>
+            <div className="info-item">
+              <strong>Input Name:</strong>
+              <span>{input.input_name}</span>
+            </div>
+            <div className="info-item">
+              <strong>Channel Name:</strong>
+              <span>{input.channel_name || 'N/A'}</span>
+            </div>
+            <div className="info-item">
+              <strong>Channel ID:</strong>
+              <span>{input.channel_id || 'N/A'}</span>
+            </div>
+            <div className="info-item">
+              <strong>Input Type:</strong>
+              <span className="badge">{input.input_type}</span>
+            </div>
+            <div className="info-item">
+              <strong>Protocol:</strong>
+              <span>{input.input_protocol || 'Auto'}</span>
+            </div>
+            <div className="info-item">
+              <strong>Input URL:</strong>
+              <span className="url-text">{input.input_url}</span>
+            </div>
+            <div className="info-item">
+              <strong>Port:</strong>
+              <span>{input.input_port || 'N/A'}</span>
+            </div>
+            <div className="info-item">
+              <strong>Probe ID:</strong>
+              <span>{input.probe_id}</span>
+            </div>
+            <div className="info-item">
+              <strong>Primary:</strong>
+              <span>{input.is_primary ? 'Yes' : 'No'}</span>
+            </div>
+            <div className="info-item">
+              <strong>Status:</strong>
+              <span className={`badge ${input.enabled ? 'badge-success' : 'badge-danger'}`}>
+                {input.enabled ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+            <div className="info-item">
+              <strong>Bitrate:</strong>
+              <span>{input.bitrate_mbps ? `${input.bitrate_mbps} Mbps` : 'N/A'}</span>
+            </div>
+            <div className="info-item">
+              <strong>Created:</strong>
+              <span>{new Date(input.created_at).toLocaleString()}</span>
+            </div>
+            <div className="info-item">
+              <strong>Updated:</strong>
+              <span>{new Date(input.updated_at).toLocaleString()}</span>
+            </div>
+            {input.last_snapshot_at && (
+              <div className="info-item">
+                <strong>Last Snapshot:</strong>
+                <span>{new Date(input.last_snapshot_at).toLocaleString()}</span>
+              </div>
+            )}
+            {input.input_metadata && (
+              <div className="info-item full-width">
+                <strong>Metadata:</strong>
+                <pre>{JSON.stringify(input.input_metadata, null, 2)}</pre>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -147,7 +147,7 @@ class Template(db.Model):
 
 class Alert(db.Model):
     __tablename__ = 'alerts'
-    
+
     alert_id = db.Column(db.Integer, primary_key=True)
     channel_id = db.Column(db.Integer, db.ForeignKey('channels.channel_id'), nullable=False)
     alert_type = db.Column(db.String(50), nullable=False)
@@ -159,10 +159,10 @@ class Alert(db.Model):
     resolved = db.Column(db.Boolean, default=False)
     resolved_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     # Relationship
     channel = db.relationship('Channel', backref='alerts')
-    
+
     def to_dict(self):
         return {
             'alert_id': self.alert_id,
@@ -176,6 +176,51 @@ class Alert(db.Model):
             'resolved': self.resolved,
             'resolved_at': self.resolved_at.isoformat() if self.resolved_at else None,
             'created_at': self.created_at.isoformat()
+        }
+
+
+class Input(db.Model):
+    __tablename__ = 'inputs'
+
+    input_id = db.Column(db.Integer, primary_key=True)
+    input_name = db.Column(db.String(200), nullable=False)
+    input_url = db.Column(db.Text, nullable=False)
+    input_type = db.Column(db.String(50), nullable=False)  # MPEGTS_UDP, HTTP, HLS, etc.
+    input_protocol = db.Column(db.String(50))  # udp, http, rtmp, etc.
+    input_port = db.Column(db.Integer)
+    channel_id = db.Column(db.Integer, db.ForeignKey('channels.channel_id'))
+    probe_id = db.Column(db.Integer, db.ForeignKey('probes.probe_id'), nullable=False)
+    is_primary = db.Column(db.Boolean, default=True)
+    enabled = db.Column(db.Boolean, default=True)
+    bitrate_mbps = db.Column(db.Float)
+    input_metadata = db.Column(db.JSON)
+    snapshot_url = db.Column(db.Text)
+    last_snapshot_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    channel = db.relationship('Channel', backref='inputs')
+    probe = db.relationship('Probe', backref='inputs')
+
+    def to_dict(self):
+        return {
+            'input_id': self.input_id,
+            'input_name': self.input_name,
+            'input_url': self.input_url,
+            'input_type': self.input_type,
+            'input_protocol': self.input_protocol,
+            'input_port': self.input_port,
+            'channel_id': self.channel_id,
+            'probe_id': self.probe_id,
+            'is_primary': self.is_primary,
+            'enabled': self.enabled,
+            'bitrate_mbps': self.bitrate_mbps,
+            'input_metadata': self.input_metadata,
+            'snapshot_url': self.snapshot_url,
+            'last_snapshot_at': self.last_snapshot_at.isoformat() if self.last_snapshot_at else None,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
         }
 
 # ============================================================================
@@ -490,7 +535,7 @@ def get_probes():
 def create_probe():
     """Create new probe"""
     data = request.get_json()
-    
+
     try:
         probe = Probe(
             probe_name=data['probe_name'],
@@ -502,21 +547,176 @@ def create_probe():
             snmp_enabled=data.get('snmp_enabled', True),
             snmp_version=data.get('snmp_version', 'v2c')
         )
-        
+
         db.session.add(probe)
         db.session.commit()
-        
+
         logger.info(f"Created probe: {probe.probe_name}")
-        
+
         return jsonify({
             'status': 'ok',
             'probe_id': probe.probe_id,
             'message': 'Probe created'
         }), 201
-    
+
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error creating probe: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# ============================================================================
+# INPUTS ENDPOINTS
+# ============================================================================
+
+@app.route('/api/v1/inputs', methods=['GET'])
+def get_inputs():
+    """Get all inputs with optional filters and channel names"""
+    probe_id = request.args.get('probe_id', type=int)
+    channel_id = request.args.get('channel_id', type=int)
+    enabled = request.args.get('enabled', type=lambda x: x.lower() == 'true', default=None)
+
+    query = Input.query
+
+    if probe_id:
+        query = query.filter_by(probe_id=probe_id)
+
+    if channel_id:
+        query = query.filter_by(channel_id=channel_id)
+
+    if enabled is not None:
+        query = query.filter_by(enabled=enabled)
+
+    inputs = query.all()
+
+    # Enrich with channel names
+    result = []
+    for inp in inputs:
+        input_dict = inp.to_dict()
+        if inp.channel:
+            input_dict['channel_name'] = inp.channel.channel_name
+        else:
+            input_dict['channel_name'] = None
+        result.append(input_dict)
+
+    return jsonify({
+        'status': 'ok',
+        'count': len(result),
+        'inputs': result
+    })
+
+
+@app.route('/api/v1/inputs/<int:input_id>', methods=['GET'])
+def get_input(input_id):
+    """Get input details with channel and probe info"""
+    inp = Input.query.get(input_id)
+
+    if not inp:
+        return jsonify({'status': 'error', 'message': 'Input not found'}), 404
+
+    input_dict = inp.to_dict()
+    if inp.channel:
+        input_dict['channel_name'] = inp.channel.channel_name
+        input_dict['channel_info'] = inp.channel.to_dict()
+    if inp.probe:
+        input_dict['probe_info'] = inp.probe.to_dict()
+
+    return jsonify({
+        'status': 'ok',
+        'input': input_dict
+    })
+
+
+@app.route('/api/v1/inputs', methods=['POST'])
+def create_input():
+    """Create new input"""
+    data = request.get_json()
+
+    # Validate required fields
+    required_fields = ['input_name', 'input_url', 'input_type', 'probe_id']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'status': 'error', 'message': f'Missing field: {field}'}), 400
+
+    try:
+        inp = Input(
+            input_name=data['input_name'],
+            input_url=data['input_url'],
+            input_type=data['input_type'],
+            input_protocol=data.get('input_protocol'),
+            input_port=data.get('input_port'),
+            channel_id=data.get('channel_id'),
+            probe_id=data['probe_id'],
+            is_primary=data.get('is_primary', True),
+            enabled=data.get('enabled', True),
+            bitrate_mbps=data.get('bitrate_mbps'),
+            input_metadata=data.get('input_metadata')
+        )
+
+        db.session.add(inp)
+        db.session.commit()
+
+        logger.info(f"Created input: {inp.input_name}")
+
+        return jsonify({
+            'status': 'ok',
+            'input_id': inp.input_id,
+            'message': 'Input created successfully'
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating input: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/v1/inputs/<int:input_id>', methods=['PUT'])
+def update_input(input_id):
+    """Update input"""
+    inp = Input.query.get(input_id)
+
+    if not inp:
+        return jsonify({'status': 'error', 'message': 'Input not found'}), 404
+
+    data = request.get_json()
+
+    try:
+        for key in ['input_name', 'input_url', 'input_type', 'input_protocol', 'input_port',
+                    'channel_id', 'probe_id', 'is_primary', 'enabled', 'bitrate_mbps', 'input_metadata']:
+            if key in data:
+                setattr(inp, key, data[key])
+
+        inp.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        logger.info(f"Updated input: {inp.input_name}")
+
+        return jsonify({'status': 'ok', 'message': 'Input updated successfully'})
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating input: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/v1/inputs/<int:input_id>', methods=['DELETE'])
+def delete_input(input_id):
+    """Delete input (soft delete by disabling)"""
+    inp = Input.query.get(input_id)
+
+    if not inp:
+        return jsonify({'status': 'error', 'message': 'Input not found'}), 404
+
+    try:
+        inp.enabled = False
+        db.session.commit()
+
+        logger.info(f"Disabled input: {inp.input_name}")
+
+        return jsonify({'status': 'ok', 'message': 'Input disabled successfully'})
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error disabling input: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # ============================================================================
