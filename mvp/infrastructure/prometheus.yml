@@ -1,0 +1,40 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'inspector-mvp'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - "alert_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # CMS API
+  - job_name: 'cms-api'
+    static_configs:
+      - targets: ['cms-api:5000']
+    metrics_path: '/metrics'
+
+  # InfluxDB
+  - job_name: 'influxdb'
+    static_configs:
+      - targets: ['influxdb:8086']
+
+  # PostgreSQL Exporter (if added later)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']

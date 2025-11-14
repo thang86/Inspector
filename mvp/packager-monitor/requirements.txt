@@ -1,0 +1,4 @@
+requests==2.31.0
+m3u8==3.5.0
+influxdb-client==1.38.0
+python-dotenv==1.0.0

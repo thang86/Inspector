@@ -1,0 +1,217 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # DATABASE - PostgreSQL
+  # ============================================================================
+  postgres:
+    image: postgres:14-alpine
+    container_name: inspector-postgres
+    environment:
+      POSTGRES_DB: inspector_monitoring
+      POSTGRES_USER: inspector_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../cms-api/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - inspector
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inspector_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================================
+  # TIME-SERIES DATABASE - InfluxDB
+  # ============================================================================
+  influxdb:
+    image: influxdb:2-alpine
+    container_name: inspector-influxdb
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD:-change_me_influx}
+      DOCKER_INFLUXDB_INIT_ORG: inspector
+      DOCKER_INFLUXDB_INIT_BUCKET: metrics
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-change_me_token}
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - inspector
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================================
+  # METRICS - Prometheus
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: inspector-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - prometheus_data:/prometheus
+    networks:
+      - inspector
+    restart: unless-stopped
+
+  # ============================================================================
+  # VISUALIZATION - Grafana
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: inspector-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-change_me_grafana}
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - inspector
+    depends_on:
+      - prometheus
+      - influxdb
+    restart: unless-stopped
+
+  # ============================================================================
+  # CMS API - Channel Management System
+  # ============================================================================
+  cms-api:
+    build:
+      context: ../cms-api
+      dockerfile: Dockerfile
+    container_name: inspector-cms-api
+    environment:
+      DATABASE_URL: postgresql://inspector_app:${POSTGRES_PASSWORD:-change_me_postgres}@postgres:5432/inspector_monitoring
+      FLASK_ENV: production
+      FLASK_DEBUG: 0
+    ports:
+      - "5000:5000"
+    networks:
+      - inspector
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # ============================================================================
+  # PACKAGER MONITOR - HLS/DASH Monitoring
+  # ============================================================================
+  packager-monitor:
+    build:
+      context: ../packager-monitor
+      dockerfile: Dockerfile
+    container_name: inspector-packager-monitor
+    environment:
+      PACKAGER_URL: ${PACKAGER_URL:-http://packager-01.internal}
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-change_me_token}
+      INFLUXDB_ORG: inspector
+      INFLUXDB_BUCKET: metrics
+      POLL_INTERVAL: ${POLL_INTERVAL:-30}
+    volumes:
+      - monitor_logs:/var/log
+    networks:
+      - inspector
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================================
+  # CDN MONITOR - Edge Performance Monitoring
+  # ============================================================================
+  cdn-monitor:
+    build:
+      context: ../cdn-monitor
+      dockerfile: Dockerfile
+    container_name: inspector-cdn-monitor
+    environment:
+      CDN_ENDPOINTS: ${CDN_ENDPOINTS:-http://cdn-edge-01.internal}
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-change_me_token}
+      INFLUXDB_ORG: inspector
+      INFLUXDB_BUCKET: metrics
+      POLL_INTERVAL: ${CDN_POLL_INTERVAL:-60}
+    volumes:
+      - cdn_logs:/var/log
+    networks:
+      - inspector
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================================
+  # UI DASHBOARD - React Frontend
+  # ============================================================================
+  ui-dashboard:
+    build:
+      context: ../ui-dashboard
+      dockerfile: Dockerfile
+    container_name: inspector-ui-dashboard
+    ports:
+      - "8080:80"
+    networks:
+      - inspector
+    depends_on:
+      - cms-api
+    restart: unless-stopped
+
+  # ============================================================================
+  # ALERT MANAGER - Prometheus AlertManager
+  # ============================================================================
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: inspector-alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    networks:
+      - inspector
+    restart: unless-stopped
+
+networks:
+  inspector:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  influxdb_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+  monitor_logs:
+  cdn_logs:

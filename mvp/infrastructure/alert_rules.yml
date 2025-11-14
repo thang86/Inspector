@@ -1,0 +1,42 @@
+groups:
+  - name: inspector_alerts
+    interval: 30s
+    rules:
+      # Service Health Alerts
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 2 minutes"
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: major
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "Error rate is {{ $value }} (threshold: 5%)"
+
+      # Database Alerts
+      - alert: DatabaseConnectionFailure
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL database is unreachable"
+          description: "Cannot connect to PostgreSQL database"
+
+      # InfluxDB Alerts
+      - alert: InfluxDBDown
+        expr: influxdb_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "InfluxDB is down"
+          description: "InfluxDB has been unreachable for 2 minutes"
