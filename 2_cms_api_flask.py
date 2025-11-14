@@ -4,12 +4,13 @@ FPT Play - CMS API (Channel Management System)
 REST API for channel configuration, templates, alert management
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import os
+import glob
 
 # ============================================================================
 # CONFIGURATION
@@ -718,6 +719,106 @@ def delete_input(input_id):
         db.session.rollback()
         logger.error(f"Error disabling input: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/v1/inputs/<int:input_id>/snapshot', methods=['GET'])
+def get_input_snapshot(input_id):
+    """Get latest snapshot image for input"""
+    inp = Input.query.get(input_id)
+
+    if not inp:
+        return jsonify({'status': 'error', 'message': 'Input not found'}), 404
+
+    if not inp.snapshot_url or not os.path.exists(inp.snapshot_url):
+        return jsonify({'status': 'error', 'message': 'No snapshot available'}), 404
+
+    try:
+        return send_file(inp.snapshot_url, mimetype='image/jpeg')
+    except Exception as e:
+        logger.error(f"Error serving snapshot: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/v1/inputs/<int:input_id>/metrics', methods=['GET'])
+def get_input_metrics(input_id):
+    """Get recent metrics for input from database"""
+    inp = Input.query.get(input_id)
+
+    if not inp:
+        return jsonify({'status': 'error', 'message': 'Input not found'}), 404
+
+    # This would query InfluxDB for recent metrics
+    # For now, return basic info from the database
+    metrics = {
+        'input_id': inp.input_id,
+        'input_name': inp.input_name,
+        'input_type': inp.input_type,
+        'enabled': inp.enabled,
+        'has_snapshot': inp.snapshot_url is not None,
+        'last_snapshot_at': inp.last_snapshot_at.isoformat() if inp.last_snapshot_at else None,
+        'bitrate_mbps': inp.bitrate_mbps,
+        'updated_at': inp.updated_at.isoformat()
+    }
+
+    return jsonify({
+        'status': 'ok',
+        'metrics': metrics
+    })
+
+
+@app.route('/api/v1/debug/inputs', methods=['GET'])
+def debug_inputs():
+    """Debug endpoint to show all input details including snapshots"""
+    inputs = Input.query.all()
+
+    debug_info = []
+    for inp in inputs:
+        info = inp.to_dict()
+        if inp.channel:
+            info['channel_name'] = inp.channel.channel_name
+        info['snapshot_exists'] = os.path.exists(inp.snapshot_url) if inp.snapshot_url else False
+        debug_info.append(info)
+
+    return jsonify({
+        'status': 'ok',
+        'count': len(debug_info),
+        'inputs': debug_info,
+        'timestamp': datetime.utcnow().isoformat()
+    })
+
+
+@app.route('/api/v1/debug/system', methods=['GET'])
+def debug_system():
+    """Debug endpoint for system information"""
+    try:
+        # Test database connection
+        db.session.execute('SELECT 1')
+
+        # Count records
+        channel_count = Channel.query.count()
+        input_count = Input.query.count()
+        probe_count = Probe.query.count()
+        alert_count = Alert.query.filter_by(resolved=False).count()
+
+        return jsonify({
+            'status': 'ok',
+            'database': 'connected',
+            'counts': {
+                'channels': channel_count,
+                'inputs': input_count,
+                'probes': probe_count,
+                'active_alerts': alert_count
+            },
+            'timestamp': datetime.utcnow().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Debug system check failed: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
 
 # ============================================================================
 # HEALTH CHECK

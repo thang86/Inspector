@@ -16,6 +16,7 @@ const Dashboard = () => {
   const [channels, setChannels] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [inputs, setInputs] = useState([]);
+  const [debugInfo, setDebugInfo] = useState(null);
   const [metrics, setMetrics] = useState({});
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState({ tier: null, is_4k: null });
@@ -24,14 +25,20 @@ const Dashboard = () => {
     fetchChannels();
     fetchActiveAlerts();
     fetchInputs();
+    if (activeTab === 'debug') {
+      fetchDebugInfo();
+    }
     const interval = setInterval(() => {
       fetchChannels();
       fetchActiveAlerts();
       fetchInputs();
+      if (activeTab === 'debug') {
+        fetchDebugInfo();
+      }
     }, 30000); // Refresh every 30 seconds
 
     return () => clearInterval(interval);
-  }, [filter]);
+  }, [filter, activeTab]);
 
   const fetchChannels = useCallback(async () => {
     try {
@@ -67,6 +74,23 @@ const Dashboard = () => {
       setInputs(data.inputs || []);
     } catch (error) {
       console.error('Error fetching inputs:', error);
+    }
+  }, []);
+
+  const fetchDebugInfo = useCallback(async () => {
+    try {
+      const [inputsRes, systemRes] = await Promise.all([
+        fetch(`${API_BASE}/debug/inputs`),
+        fetch(`${API_BASE}/debug/system`)
+      ]);
+      const inputsData = await inputsRes.json();
+      const systemData = await systemRes.json();
+      setDebugInfo({
+        inputs: inputsData,
+        system: systemData
+      });
+    } catch (error) {
+      console.error('Error fetching debug info:', error);
     }
   }, []);
 
@@ -133,6 +157,12 @@ const Dashboard = () => {
         >
           Metrics
         </button>
+        <button
+          className={`tab ${activeTab === 'debug' ? 'active' : ''}`}
+          onClick={() => setActiveTab('debug')}
+        >
+          Debug
+        </button>
       </div>
 
       <div className="tab-content">
@@ -164,6 +194,13 @@ const Dashboard = () => {
         )}
 
         {activeTab === 'metrics' && <MetricsTab />}
+
+        {activeTab === 'debug' && (
+          <DebugTab
+            debugInfo={debugInfo}
+            onRefresh={fetchDebugInfo}
+          />
+        )}
       </div>
     </div>
   );
@@ -647,6 +684,7 @@ const InputsTab = ({ inputs, loading, onRefresh }) => {
             <table className="inputs-table">
               <thead>
                 <tr>
+                  <th>Thumbnail</th>
                   <th>ID</th>
                   <th>Input Name</th>
                   <th>Channel Name</th>
@@ -656,12 +694,25 @@ const InputsTab = ({ inputs, loading, onRefresh }) => {
                   <th>Probe ID</th>
                   <th>Primary</th>
                   <th>Status</th>
+                  <th>Last Snapshot</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {inputs.map(input => (
                   <tr key={input.input_id}>
+                    <td className="thumbnail-cell">
+                      {input.snapshot_url ? (
+                        <img
+                          src={`${API_BASE}/inputs/${input.input_id}/snapshot`}
+                          alt="Snapshot"
+                          className="input-thumbnail"
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div className="no-thumbnail">No snapshot</div>
+                      )}
+                    </td>
                     <td>{input.input_id}</td>
                     <td><strong>{input.input_name}</strong></td>
                     <td>{input.channel_name || 'N/A'}</td>
@@ -674,6 +725,9 @@ const InputsTab = ({ inputs, loading, onRefresh }) => {
                       <span className={`badge ${input.enabled ? 'badge-success' : 'badge-danger'}`}>
                         {input.enabled ? 'Enabled' : 'Disabled'}
                       </span>
+                    </td>
+                    <td className="timestamp-cell">
+                      {input.last_snapshot_at ? new Date(input.last_snapshot_at).toLocaleString() : 'Never'}
                     </td>
                     <td className="actions">
                       <button className="btn btn-xs btn-info" onClick={() => handleInfo(input)}>
@@ -1007,6 +1061,162 @@ const InputInfoModal = ({ input, onClose }) => {
           <button className="btn btn-secondary" onClick={onClose}>
             Close
           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// DEBUG TAB
+// ============================================================================
+
+const DebugTab = ({ debugInfo, onRefresh }) => {
+  if (!debugInfo) {
+    return (
+      <div className="debug-tab">
+        <div className="debug-header">
+          <h2>Debug Information</h2>
+          <button className="btn btn-primary" onClick={onRefresh}>
+            Refresh Debug Info
+          </button>
+        </div>
+        <p className="loading">Loading debug information...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="debug-tab">
+      <div className="debug-header">
+        <h2>Debug Information</h2>
+        <button className="btn btn-primary" onClick={onRefresh}>
+          Refresh Debug Info
+        </button>
+      </div>
+
+      {/* System Info */}
+      <div className="debug-section">
+        <h3>System Status</h3>
+        <div className="debug-info-grid">
+          <div className="debug-item">
+            <strong>Status:</strong>
+            <span className={`badge ${debugInfo.system.status === 'ok' ? 'badge-success' : 'badge-danger'}`}>
+              {debugInfo.system.status}
+            </span>
+          </div>
+          <div className="debug-item">
+            <strong>Database:</strong>
+            <span>{debugInfo.system.database || 'Unknown'}</span>
+          </div>
+          <div className="debug-item">
+            <strong>Timestamp:</strong>
+            <span>{new Date(debugInfo.system.timestamp).toLocaleString()}</span>
+          </div>
+        </div>
+
+        {debugInfo.system.counts && (
+          <div className="debug-counts">
+            <h4>Record Counts</h4>
+            <div className="count-grid">
+              <div className="count-item">
+                <strong>Channels:</strong> {debugInfo.system.counts.channels}
+              </div>
+              <div className="count-item">
+                <strong>Inputs:</strong> {debugInfo.system.counts.inputs}
+              </div>
+              <div className="count-item">
+                <strong>Probes:</strong> {debugInfo.system.counts.probes}
+              </div>
+              <div className="count-item">
+                <strong>Active Alerts:</strong> {debugInfo.system.counts.active_alerts}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Inputs Debug Info */}
+      <div className="debug-section">
+        <h3>Inputs Debug ({debugInfo.inputs.count})</h3>
+        {debugInfo.inputs.count === 0 ? (
+          <p className="no-data">No inputs found in database</p>
+        ) : (
+          <div className="debug-inputs-list">
+            {debugInfo.inputs.inputs.map(input => (
+              <div key={input.input_id} className="debug-input-card">
+                <div className="debug-input-header">
+                  <h4>
+                    Input #{input.input_id}: {input.input_name}
+                    {input.snapshot_url && (
+                      <img
+                        src={`${API_BASE}/inputs/${input.input_id}/snapshot`}
+                        alt="Snapshot"
+                        className="debug-thumbnail"
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                      />
+                    )}
+                  </h4>
+                  <span className={`badge ${input.enabled ? 'badge-success' : 'badge-danger'}`}>
+                    {input.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </div>
+                <div className="debug-input-details">
+                  <div><strong>Channel:</strong> {input.channel_name || 'N/A'} (ID: {input.channel_id || 'N/A'})</div>
+                  <div><strong>Type:</strong> {input.input_type}</div>
+                  <div><strong>Protocol:</strong> {input.input_protocol || 'Auto'}</div>
+                  <div><strong>URL:</strong> <code>{input.input_url}</code></div>
+                  <div><strong>Port:</strong> {input.input_port || 'N/A'}</div>
+                  <div><strong>Probe ID:</strong> {input.probe_id}</div>
+                  <div><strong>Primary:</strong> {input.is_primary ? 'Yes' : 'No'}</div>
+                  <div><strong>Bitrate:</strong> {input.bitrate_mbps ? `${input.bitrate_mbps} Mbps` : 'N/A'}</div>
+                  <div>
+                    <strong>Snapshot:</strong>
+                    {input.snapshot_url ? (
+                      <span className={input.snapshot_exists ? 'text-success' : 'text-danger'}>
+                        {input.snapshot_exists ? ' File exists' : ' File missing'}
+                        {' '}<code>{input.snapshot_url}</code>
+                      </span>
+                    ) : (
+                      <span className="text-muted"> None</span>
+                    )}
+                  </div>
+                  <div>
+                    <strong>Last Snapshot:</strong>
+                    {input.last_snapshot_at ? new Date(input.last_snapshot_at).toLocaleString() : ' Never'}
+                  </div>
+                  <div><strong>Created:</strong> {new Date(input.created_at).toLocaleString()}</div>
+                  <div><strong>Updated:</strong> {new Date(input.updated_at).toLocaleString()}</div>
+                  {input.input_metadata && (
+                    <div className="metadata-section">
+                      <strong>Metadata:</strong>
+                      <pre>{JSON.stringify(input.input_metadata, null, 2)}</pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Logs Section */}
+      <div className="debug-section">
+        <h3>Recent Logs</h3>
+        <div className="log-viewer">
+          <p className="info-text">
+            Monitor service logs are written to /var/log/packager-monitor.log
+            <br />
+            Check the server logs for detailed probe and analysis information.
+          </p>
+          <div className="log-commands">
+            <h4>Useful Commands:</h4>
+            <code>tail -f /var/log/packager-monitor.log</code>
+            <br />
+            <code>grep "UDP probe" /var/log/packager-monitor.log | tail -20</code>
+            <br />
+            <code>grep "ERROR" /var/log/packager-monitor.log | tail -20</code>
+          </div>
         </div>
       </div>
     </div>

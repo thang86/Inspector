@@ -22,6 +22,9 @@ import struct
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
+import subprocess
+import tempfile
+import base64
 
 # ============================================================================
 # CONFIGURATION
@@ -62,6 +65,12 @@ class MonitorConfig:
     udp_timeout: float = 5.0  # seconds
     udp_buffer_size: int = 188 * 7  # TS packets (188 bytes each)
     min_ts_packets: int = 100  # minimum packets to receive for valid probe
+
+    # Snapshot/Thumbnail
+    enable_snapshots: bool = True
+    snapshot_duration: int = 3  # seconds to capture for snapshot
+    snapshot_interval: int = 60  # take snapshot every N seconds
+    snapshot_dir: str = "/tmp/inspector_snapshots"
 
     # Polling
     poll_interval: int = 30  # seconds
@@ -157,9 +166,19 @@ class PackagerMonitor:
         self.write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
         self.executor = ThreadPoolExecutor(max_workers=config.max_workers)
         self.metric_cache = {}  # Store last metrics for comparison
+        self.last_snapshot_times = {}  # Track when we last took snapshots
         self.db_conn = None
         self._connect_db()
+        self._setup_snapshot_dir()
     
+    def _setup_snapshot_dir(self):
+        """Create snapshot directory if it doesn't exist"""
+        try:
+            os.makedirs(self.config.snapshot_dir, exist_ok=True)
+            logger.info(f"Snapshot directory ready: {self.config.snapshot_dir}")
+        except Exception as e:
+            logger.error(f"Failed to create snapshot directory: {e}")
+
     def _connect_db(self):
         """Connect to PostgreSQL database"""
         try:
@@ -427,7 +446,86 @@ class PackagerMonitor:
                     sock.close()
                 except:
                     pass
-    
+
+        # Capture snapshot if enabled and sufficient time has passed
+        if is_valid and self.config.enable_snapshots:
+            self._capture_snapshot(input_source)
+
+    def _capture_snapshot(self, input_source: InputSource):
+        """Capture snapshot/thumbnail from UDP stream using ffmpeg"""
+        # Check if we should take a snapshot (throttle by interval)
+        current_time = time.time()
+        last_snapshot = self.last_snapshot_times.get(input_source.input_id, 0)
+
+        if current_time - last_snapshot < self.config.snapshot_interval:
+            logger.debug(f"Skipping snapshot for {input_source.input_name} (too soon)")
+            return
+
+        try:
+            # Use ffmpeg to capture a frame from the UDP stream
+            output_file = os.path.join(
+                self.config.snapshot_dir,
+                f"input_{input_source.input_id}_{int(current_time)}.jpg"
+            )
+
+            # FFmpeg command to capture one frame from UDP stream
+            cmd = [
+                'ffmpeg',
+                '-hide_banner',
+                '-loglevel', 'error',
+                '-i', input_source.input_url,
+                '-frames:v', '1',
+                '-q:v', '2',
+                '-t', str(self.config.snapshot_duration),
+                '-y',
+                output_file
+            ]
+
+            logger.debug(f"Capturing snapshot for {input_source.input_name}: {' '.join(cmd)}")
+
+            # Run ffmpeg with timeout
+            result = subprocess.run(
+                cmd,
+                timeout=self.config.snapshot_duration + 5,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode == 0 and os.path.exists(output_file):
+                # Update database with snapshot URL
+                self._update_input_snapshot(input_source.input_id, output_file)
+                self.last_snapshot_times[input_source.input_id] = current_time
+                logger.info(f"Captured snapshot for {input_source.input_name}: {output_file}")
+            else:
+                logger.warning(
+                    f"Failed to capture snapshot for {input_source.input_name}: "
+                    f"{result.stderr}"
+                )
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Snapshot capture timeout for {input_source.input_name}")
+        except Exception as e:
+            logger.error(f"Error capturing snapshot for {input_source.input_name}: {e}")
+
+    def _update_input_snapshot(self, input_id: int, snapshot_path: str):
+        """Update input record with snapshot URL and timestamp"""
+        if not self.db_conn:
+            return
+
+        try:
+            with self.db_conn.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE inputs
+                    SET snapshot_url = %s,
+                        last_snapshot_at = NOW()
+                    WHERE input_id = %s
+                """, (snapshot_path, input_id))
+                self.db_conn.commit()
+                logger.debug(f"Updated snapshot for input {input_id}")
+        except Exception as e:
+            logger.error(f"Error updating snapshot in database: {e}")
+            self.db_conn.rollback()
+
     def monitor_channel(self, channel_id: str):
         """Monitor single channel"""
         try:
