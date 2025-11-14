@@ -15,6 +15,8 @@ const Dashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [channels, setChannels] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [probeInputs, setProbeInputs] = useState([]);
+  const [probes, setProbes] = useState([]);
   const [metrics, setMetrics] = useState({});
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState({ tier: null, is_4k: null });
@@ -22,9 +24,12 @@ const Dashboard = () => {
   useEffect(() => {
     fetchChannels();
     fetchActiveAlerts();
+    fetchProbes();
+    fetchProbeInputs();
     const interval = setInterval(() => {
       fetchChannels();
       fetchActiveAlerts();
+      fetchProbeInputs();
     }, 30000); // Refresh every 30 seconds
 
     return () => clearInterval(interval);
@@ -54,6 +59,26 @@ const Dashboard = () => {
       setAlerts(data.alerts || []);
     } catch (error) {
       console.error('Error fetching alerts:', error);
+    }
+  }, []);
+
+  const fetchProbes = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/probes`);
+      const data = await response.json();
+      setProbes(data.probes || []);
+    } catch (error) {
+      console.error('Error fetching probes:', error);
+    }
+  }, []);
+
+  const fetchProbeInputs = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/probe-inputs`);
+      const data = await response.json();
+      setProbeInputs(data.probe_inputs || []);
+    } catch (error) {
+      console.error('Error fetching probe inputs:', error);
     }
   }, []);
 
@@ -108,7 +133,13 @@ const Dashboard = () => {
         >
           Alerts ({alerts.length})
         </button>
-        <button 
+        <button
+          className={`tab ${activeTab === 'inputs' ? 'active' : ''}`}
+          onClick={() => setActiveTab('inputs')}
+        >
+          Probe Inputs
+        </button>
+        <button
           className={`tab ${activeTab === 'metrics' ? 'active' : ''}`}
           onClick={() => setActiveTab('metrics')}
         >
@@ -129,13 +160,22 @@ const Dashboard = () => {
         )}
         
         {activeTab === 'alerts' && (
-          <AlertsTab 
+          <AlertsTab
             alerts={alerts}
             onAcknowledge={acknowledgeAlert}
             onResolve={resolveAlert}
           />
         )}
-        
+
+        {activeTab === 'inputs' && (
+          <ProbeInputsTab
+            probeInputs={probeInputs}
+            channels={channels}
+            probes={probes}
+            onRefresh={fetchProbeInputs}
+          />
+        )}
+
         {activeTab === 'metrics' && <MetricsTab />}
       </div>
     </div>
@@ -559,6 +599,378 @@ const MetricsTab = () => {
           </LineChart>
         </ResponsiveContainer>
       </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// PROBE INPUTS TAB
+// ============================================================================
+
+const ProbeInputsTab = ({ probeInputs, channels, probes, onRefresh }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [editingInput, setEditingInput] = useState(null);
+  const [filterProbeId, setFilterProbeId] = useState(null);
+  const [filterChannelId, setFilterChannelId] = useState(null);
+
+  const handleCreate = () => {
+    setEditingInput(null);
+    setShowForm(true);
+  };
+
+  const handleEdit = (input) => {
+    setEditingInput(input);
+    setShowForm(true);
+  };
+
+  const handleFormClose = () => {
+    setShowForm(false);
+    setEditingInput(null);
+  };
+
+  const handleFormSubmit = async () => {
+    setShowForm(false);
+    setEditingInput(null);
+    await onRefresh();
+  };
+
+  const handleDelete = async (inputId) => {
+    if (!window.confirm('Are you sure you want to delete this input?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/probe-inputs/${inputId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        await onRefresh();
+      } else {
+        alert('Failed to delete input');
+      }
+    } catch (error) {
+      console.error('Error deleting input:', error);
+      alert('Error deleting input');
+    }
+  };
+
+  const filteredInputs = probeInputs.filter(input => {
+    if (filterProbeId && input.probe_id !== parseInt(filterProbeId)) return false;
+    if (filterChannelId && input.channel_id !== parseInt(filterChannelId)) return false;
+    return true;
+  });
+
+  return (
+    <div className="probe-inputs-tab">
+      <div className="tab-header">
+        <h2>MPEG-TS Probe Inputs</h2>
+        <button className="btn btn-primary" onClick={handleCreate}>
+          + Add New Input
+        </button>
+      </div>
+
+      <div className="filter-bar">
+        <label>
+          Probe:
+          <select value={filterProbeId || ''} onChange={(e) => setFilterProbeId(e.target.value || null)}>
+            <option value="">All Probes</option>
+            {probes.map(probe => (
+              <option key={probe.probe_id} value={probe.probe_id}>
+                {probe.probe_name} (ID: {probe.probe_id})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Channel:
+          <select value={filterChannelId || ''} onChange={(e) => setFilterChannelId(e.target.value || null)}>
+            <option value="">All Channels</option>
+            {channels.map(channel => (
+              <option key={channel.channel_id} value={channel.channel_id}>
+                {channel.channel_name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {showForm && (
+        <ProbeInputForm
+          input={editingInput}
+          channels={channels}
+          probes={probes}
+          onSubmit={handleFormSubmit}
+          onCancel={handleFormClose}
+        />
+      )}
+
+      <ProbeInputList
+        inputs={filteredInputs}
+        channels={channels}
+        probes={probes}
+        onEdit={handleEdit}
+        onDelete={handleDelete}
+      />
+    </div>
+  );
+};
+
+const ProbeInputForm = ({ input, channels, probes, onSubmit, onCancel }) => {
+  const [formData, setFormData] = useState({
+    probe_id: input?.probe_id || '',
+    channel_id: input?.channel_id || '',
+    input_name: input?.input_name || '',
+    input_type: input?.input_type || 'MPEGTS_UDP',
+    input_url: input?.input_url || '',
+    input_port: input?.input_port || '',
+    bitrate_mbps: input?.bitrate_mbps || '',
+    is_primary: input?.is_primary !== undefined ? input.is_primary : true,
+    enabled: input?.enabled !== undefined ? input.enabled : true
+  });
+
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setFormData({
+      ...formData,
+      [name]: type === 'checkbox' ? checked : value
+    });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+
+    try {
+      const url = input
+        ? `${API_BASE}/probe-inputs/${input.input_id}`
+        : `${API_BASE}/probe-inputs`;
+
+      const method = input ? 'PUT' : 'POST';
+
+      const payload = {
+        ...formData,
+        probe_id: parseInt(formData.probe_id),
+        channel_id: parseInt(formData.channel_id),
+        input_port: formData.input_port ? parseInt(formData.input_port) : null,
+        bitrate_mbps: formData.bitrate_mbps ? parseFloat(formData.bitrate_mbps) : null
+      };
+
+      const response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        onSubmit();
+      } else {
+        const error = await response.json();
+        alert(`Error: ${error.error || 'Failed to save input'}`);
+      }
+    } catch (error) {
+      console.error('Error saving input:', error);
+      alert('Error saving input');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="input-form-overlay">
+      <div className="input-form">
+        <h3>{input ? 'Edit Probe Input' : 'Create New Probe Input'}</h3>
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>Probe *</label>
+              <select name="probe_id" value={formData.probe_id} onChange={handleChange} required>
+                <option value="">Select Probe</option>
+                {probes.map(probe => (
+                  <option key={probe.probe_id} value={probe.probe_id}>
+                    {probe.probe_name} - {probe.location}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Channel *</label>
+              <select name="channel_id" value={formData.channel_id} onChange={handleChange} required>
+                <option value="">Select Channel</option>
+                {channels.map(channel => (
+                  <option key={channel.channel_id} value={channel.channel_id}>
+                    {channel.channel_name} ({channel.channel_code})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Input Name *</label>
+              <input
+                type="text"
+                name="input_name"
+                value={formData.input_name}
+                onChange={handleChange}
+                placeholder="e.g., Primary Input"
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Input Type *</label>
+              <select name="input_type" value={formData.input_type} onChange={handleChange} required>
+                <option value="MPEGTS_UDP">MPEG-TS UDP</option>
+                <option value="MPEGTS_HTTP">MPEG-TS HTTP</option>
+                <option value="MPEGTS_RTP">MPEG-TS RTP</option>
+                <option value="SRT">SRT</option>
+                <option value="RTMP">RTMP</option>
+              </select>
+            </div>
+
+            <div className="form-group full-width">
+              <label>Input URL *</label>
+              <input
+                type="text"
+                name="input_url"
+                value={formData.input_url}
+                onChange={handleChange}
+                placeholder="e.g., udp://239.1.1.1:5000 or http://encoder:8080/stream.ts"
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Port</label>
+              <input
+                type="number"
+                name="input_port"
+                value={formData.input_port}
+                onChange={handleChange}
+                placeholder="e.g., 5000"
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Bitrate (Mbps)</label>
+              <input
+                type="number"
+                step="0.1"
+                name="bitrate_mbps"
+                value={formData.bitrate_mbps}
+                onChange={handleChange}
+                placeholder="e.g., 10.0"
+              />
+            </div>
+
+            <div className="form-group checkbox-group">
+              <label>
+                <input
+                  type="checkbox"
+                  name="is_primary"
+                  checked={formData.is_primary}
+                  onChange={handleChange}
+                />
+                Primary Input
+              </label>
+            </div>
+
+            <div className="form-group checkbox-group">
+              <label>
+                <input
+                  type="checkbox"
+                  name="enabled"
+                  checked={formData.enabled}
+                  onChange={handleChange}
+                />
+                Enabled
+              </label>
+            </div>
+          </div>
+
+          <div className="form-actions">
+            <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={submitting}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={submitting}>
+              {submitting ? 'Saving...' : (input ? 'Update Input' : 'Create Input')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const ProbeInputList = ({ inputs, channels, probes, onEdit, onDelete }) => {
+  const getChannelName = (channelId) => {
+    const channel = channels.find(c => c.channel_id === channelId);
+    return channel ? channel.channel_name : `Channel ${channelId}`;
+  };
+
+  const getProbeName = (probeId) => {
+    const probe = probes.find(p => p.probe_id === probeId);
+    return probe ? probe.probe_name : `Probe ${probeId}`;
+  };
+
+  return (
+    <div className="inputs-table">
+      {inputs.length === 0 ? (
+        <p className="no-data">No probe inputs configured. Click "Add New Input" to create one.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Probe</th>
+              <th>Channel</th>
+              <th>Type</th>
+              <th>URL</th>
+              <th>Bitrate</th>
+              <th>Primary</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {inputs.map(input => (
+              <tr key={input.input_id} className={!input.enabled ? 'disabled' : ''}>
+                <td>{input.input_id}</td>
+                <td><strong>{input.input_name}</strong></td>
+                <td>{getProbeName(input.probe_id)}</td>
+                <td>{getChannelName(input.channel_id)}</td>
+                <td><span className="badge type-badge">{input.input_type}</span></td>
+                <td className="url-cell" title={input.input_url}>
+                  {input.input_url.length > 40 ? input.input_url.substring(0, 40) + '...' : input.input_url}
+                </td>
+                <td>{input.bitrate_mbps ? `${input.bitrate_mbps} Mbps` : '-'}</td>
+                <td>
+                  {input.is_primary ? (
+                    <span className="badge primary-badge">Primary</span>
+                  ) : (
+                    <span className="badge backup-badge">Backup</span>
+                  )}
+                </td>
+                <td>
+                  <span className={`status-indicator ${input.enabled ? 'active' : 'inactive'}`}>
+                    {input.enabled ? '● Active' : '○ Disabled'}
+                  </span>
+                </td>
+                <td className="actions">
+                  <button className="btn btn-xs" onClick={() => onEdit(input)}>Edit</button>
+                  <button className="btn btn-xs btn-danger" onClick={() => onDelete(input.input_id)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 };
