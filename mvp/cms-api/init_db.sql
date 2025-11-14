@@ -60,6 +60,27 @@ CREATE TABLE IF NOT EXISTS channels (
 );
 
 -- ============================================================================
+-- PROBE INPUTS TABLE
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS probe_inputs (
+    input_id SERIAL PRIMARY KEY,
+    probe_id INTEGER NOT NULL REFERENCES probes(probe_id) ON DELETE CASCADE,
+    channel_id INTEGER NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
+    input_name VARCHAR(100) NOT NULL,
+    input_type VARCHAR(20) NOT NULL CHECK (input_type IN ('MPEGTS_UDP', 'MPEGTS_HTTP', 'MPEGTS_RTP', 'SRT', 'RTMP')),
+    input_url TEXT NOT NULL,
+    input_port INTEGER,
+    input_protocol VARCHAR(10),
+    bitrate_mbps FLOAT,
+    is_primary BOOLEAN DEFAULT TRUE,
+    enabled BOOLEAN DEFAULT TRUE,
+    metadata JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(probe_id, channel_id, input_name)
+);
+
+-- ============================================================================
 -- ALERTS TABLE
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS alerts (
@@ -82,6 +103,9 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE INDEX IF NOT EXISTS idx_channels_tier ON channels(tier);
 CREATE INDEX IF NOT EXISTS idx_channels_enabled ON channels(enabled);
 CREATE INDEX IF NOT EXISTS idx_channels_probe ON channels(probe_id);
+CREATE INDEX IF NOT EXISTS idx_probe_inputs_probe ON probe_inputs(probe_id);
+CREATE INDEX IF NOT EXISTS idx_probe_inputs_channel ON probe_inputs(channel_id);
+CREATE INDEX IF NOT EXISTS idx_probe_inputs_enabled ON probe_inputs(enabled);
 CREATE INDEX IF NOT EXISTS idx_alerts_channel ON alerts(channel_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
 CREATE INDEX IF NOT EXISTS idx_alerts_resolved ON alerts(resolved);

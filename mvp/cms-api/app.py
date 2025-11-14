@@ -145,9 +145,50 @@ class Template(db.Model):
         }
 
 
+class ProbeInput(db.Model):
+    __tablename__ = 'probe_inputs'
+
+    input_id = db.Column(db.Integer, primary_key=True)
+    probe_id = db.Column(db.Integer, db.ForeignKey('probes.probe_id'), nullable=False)
+    channel_id = db.Column(db.Integer, db.ForeignKey('channels.channel_id'), nullable=False)
+    input_name = db.Column(db.String(100), nullable=False)
+    input_type = db.Column(db.String(20), nullable=False)  # MPEGTS_UDP, MPEGTS_HTTP, etc.
+    input_url = db.Column(db.Text, nullable=False)
+    input_port = db.Column(db.Integer)
+    input_protocol = db.Column(db.String(10))
+    bitrate_mbps = db.Column(db.Float)
+    is_primary = db.Column(db.Boolean, default=True)
+    enabled = db.Column(db.Boolean, default=True)
+    metadata = db.Column(db.JSON)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    probe = db.relationship('Probe', backref='inputs')
+    channel = db.relationship('Channel', backref='inputs')
+
+    def to_dict(self):
+        return {
+            'input_id': self.input_id,
+            'probe_id': self.probe_id,
+            'channel_id': self.channel_id,
+            'input_name': self.input_name,
+            'input_type': self.input_type,
+            'input_url': self.input_url,
+            'input_port': self.input_port,
+            'input_protocol': self.input_protocol,
+            'bitrate_mbps': self.bitrate_mbps,
+            'is_primary': self.is_primary,
+            'enabled': self.enabled,
+            'metadata': self.metadata,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
+        }
+
+
 class Alert(db.Model):
     __tablename__ = 'alerts'
-    
+
     alert_id = db.Column(db.Integer, primary_key=True)
     channel_id = db.Column(db.Integer, db.ForeignKey('channels.channel_id'), nullable=False)
     alert_type = db.Column(db.String(50), nullable=False)
@@ -159,10 +200,10 @@ class Alert(db.Model):
     resolved = db.Column(db.Boolean, default=False)
     resolved_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     # Relationship
     channel = db.relationship('Channel', backref='alerts')
-    
+
     def to_dict(self):
         return {
             'alert_id': self.alert_id,
@@ -520,6 +561,162 @@ def create_probe():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # ============================================================================
+# PROBE INPUTS ENDPOINTS
+# ============================================================================
+
+@app.route('/api/v1/probe-inputs', methods=['GET'])
+def get_probe_inputs():
+    """Get all probe inputs with filters"""
+    probe_id = request.args.get('probe_id', type=int)
+    channel_id = request.args.get('channel_id', type=int)
+    enabled = request.args.get('enabled', type=lambda x: x.lower() == 'true', default=None)
+
+    query = ProbeInput.query
+
+    if probe_id:
+        query = query.filter_by(probe_id=probe_id)
+    if channel_id:
+        query = query.filter_by(channel_id=channel_id)
+    if enabled is not None:
+        query = query.filter_by(enabled=enabled)
+
+    inputs = query.all()
+
+    return jsonify({
+        'status': 'ok',
+        'count': len(inputs),
+        'inputs': [inp.to_dict() for inp in inputs]
+    })
+
+
+@app.route('/api/v1/probe-inputs/<int:input_id>', methods=['GET'])
+def get_probe_input(input_id):
+    """Get probe input details"""
+    probe_input = ProbeInput.query.get(input_id)
+
+    if not probe_input:
+        return jsonify({'status': 'error', 'message': 'Probe input not found'}), 404
+
+    return jsonify({
+        'status': 'ok',
+        'input': probe_input.to_dict(),
+        'probe': probe_input.probe.to_dict(),
+        'channel': probe_input.channel.to_dict()
+    })
+
+
+@app.route('/api/v1/probe-inputs', methods=['POST'])
+def create_probe_input():
+    """Create new probe input"""
+    data = request.get_json()
+
+    # Validate required fields
+    required_fields = ['probe_id', 'channel_id', 'input_name', 'input_type', 'input_url']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'status': 'error', 'message': f'Missing field: {field}'}), 400
+
+    try:
+        probe_input = ProbeInput(
+            probe_id=data['probe_id'],
+            channel_id=data['channel_id'],
+            input_name=data['input_name'],
+            input_type=data['input_type'],
+            input_url=data['input_url'],
+            input_port=data.get('input_port'),
+            input_protocol=data.get('input_protocol'),
+            bitrate_mbps=data.get('bitrate_mbps'),
+            is_primary=data.get('is_primary', True),
+            enabled=data.get('enabled', True),
+            metadata=data.get('metadata')
+        )
+
+        db.session.add(probe_input)
+        db.session.commit()
+
+        logger.info(f"Created probe input: {probe_input.input_name} for channel {data['channel_id']}")
+
+        return jsonify({
+            'status': 'ok',
+            'input_id': probe_input.input_id,
+            'message': 'Probe input created successfully'
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating probe input: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/v1/probe-inputs/<int:input_id>', methods=['PUT'])
+def update_probe_input(input_id):
+    """Update probe input"""
+    probe_input = ProbeInput.query.get(input_id)
+
+    if not probe_input:
+        return jsonify({'status': 'error', 'message': 'Probe input not found'}), 404
+
+    data = request.get_json()
+
+    try:
+        for key in ['input_name', 'input_type', 'input_url', 'input_port', 'input_protocol',
+                    'bitrate_mbps', 'is_primary', 'enabled', 'metadata']:
+            if key in data:
+                setattr(probe_input, key, data[key])
+
+        probe_input.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        logger.info(f"Updated probe input: {probe_input.input_id}")
+
+        return jsonify({'status': 'ok', 'message': 'Probe input updated successfully'})
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating probe input: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/v1/probe-inputs/<int:input_id>', methods=['DELETE'])
+def delete_probe_input(input_id):
+    """Delete probe input"""
+    probe_input = ProbeInput.query.get(input_id)
+
+    if not probe_input:
+        return jsonify({'status': 'error', 'message': 'Probe input not found'}), 404
+
+    try:
+        db.session.delete(probe_input)
+        db.session.commit()
+
+        logger.info(f"Deleted probe input: {input_id}")
+
+        return jsonify({'status': 'ok', 'message': 'Probe input deleted successfully'})
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting probe input: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/v1/channels/<int:channel_id>/inputs', methods=['GET'])
+def get_channel_inputs(channel_id):
+    """Get all inputs for a specific channel"""
+    channel = Channel.query.get(channel_id)
+
+    if not channel:
+        return jsonify({'status': 'error', 'message': 'Channel not found'}), 404
+
+    inputs = ProbeInput.query.filter_by(channel_id=channel_id).all()
+
+    return jsonify({
+        'status': 'ok',
+        'channel': channel.to_dict(),
+        'inputs': [inp.to_dict() for inp in inputs]
+    })
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -529,13 +726,13 @@ def health_check():
     try:
         # Test database connection
         db.session.execute('SELECT 1')
-        
+
         return jsonify({
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
             'database': 'connected'
         })
-    
+
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return jsonify({

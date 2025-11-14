@@ -170,6 +170,30 @@ services:
     restart: unless-stopped
 
   # ============================================================================
+  # MPEG-TS MONITOR - Input Stream Monitoring
+  # ============================================================================
+  mpegts-monitor:
+    build:
+      context: ../mpegts-monitor
+      dockerfile: Dockerfile
+    container_name: inspector-mpegts-monitor
+    environment:
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-change_me_token}
+      INFLUXDB_ORG: inspector
+      INFLUXDB_BUCKET: metrics
+      POLL_INTERVAL: ${MPEGTS_POLL_INTERVAL:-5}
+      MPEGTS_CHANNELS: ${MPEGTS_CHANNELS:-}
+    volumes:
+      - mpegts_logs:/var/log
+    networks:
+      - inspector
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================================
   # UI DASHBOARD - React Frontend
   # ============================================================================
   ui-dashboard:
@@ -215,3 +239,4 @@ volumes:
   alertmanager_data:
   monitor_logs:
   cdn_logs:
+  mpegts_logs:
