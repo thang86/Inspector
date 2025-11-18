@@ -1,0 +1,31 @@
+FROM python:3.11-slim
+
+LABEL maintainer="FPT Play SRE Team"
+LABEL description="Inspector Packager Monitor - Real-time HLS/DASH monitoring"
+
+WORKDIR /app
+
+# Install system dependencies including ffmpeg for snapshot capture
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    curl \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY deploy/requirements-packager-monitor.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements-packager-monitor.txt
+
+# Copy application
+COPY 1_packager_monitor_service.py monitor.py
+
+# Create log and snapshot directories
+RUN mkdir -p /var/log/packager-monitor /tmp/inspector_snapshots
+
+# Expose no ports (service is internal)
+
+# Run application
+CMD ["python", "-u", "monitor.py"]
