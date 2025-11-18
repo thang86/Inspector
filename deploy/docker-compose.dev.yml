@@ -1,0 +1,151 @@
+version: '3.8'
+
+# FPT Play Inspector - Dev Monitoring Stack
+# Simplified deployment for development environment
+
+services:
+  # ============================================================================
+  # POSTGRESQL - Database
+  # ============================================================================
+  postgres:
+    image: postgres:14-alpine
+    container_name: inspector-db-dev
+    environment:
+      POSTGRES_DB: fpt_play_monitoring
+      POSTGRES_USER: monitor_app
+      POSTGRES_PASSWORD: dev_password_123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ../deploy/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - monitoring-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitor_app -d fpt_play_monitoring"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================================
+  # INFLUXDB - Time-Series Metrics Database
+  # ============================================================================
+  influxdb:
+    image: influxdb:2-alpine
+    container_name: inspector-influxdb-dev
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: admin_password_123
+      DOCKER_INFLUXDB_INIT_ORG: fpt-play
+      DOCKER_INFLUXDB_INIT_BUCKET: packager_metrics
+      DOCKER_INFLUXDB_INIT_RETENTION: 7d
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: dev_influxdb_token_12345
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_dev_data:/var/lib/influxdb2
+    networks:
+      - monitoring-dev
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================================
+  # CMS API - Flask REST API
+  # ============================================================================
+  cms-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.cms-api
+    container_name: inspector-cms-api-dev
+    environment:
+      DATABASE_URL: postgresql://monitor_app:dev_password_123@postgres:5432/fpt_play_monitoring
+      FLASK_ENV: development
+      FLASK_DEBUG: 1
+    ports:
+      - "5000:5000"
+    volumes:
+      - ../2_cms_api_flask.py:/app/app.py
+      - /tmp/inspector_snapshots:/tmp/inspector_snapshots
+    networks:
+      - monitoring-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================================
+  # PACKAGER MONITOR - Real-time segment monitoring
+  # ============================================================================
+  packager-monitor:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.packager-monitor
+    container_name: inspector-monitor-dev
+    environment:
+      DATABASE_URL: postgresql://monitor_app:dev_password_123@postgres:5432/fpt_play_monitoring
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: dev_influxdb_token_12345
+      INFLUXDB_ORG: fpt-play
+      INFLUXDB_BUCKET: packager_metrics
+      POLL_INTERVAL: "30"
+      # UDP Monitoring config
+      ENABLE_SNAPSHOTS: "true"
+      SNAPSHOT_DIR: /tmp/inspector_snapshots
+      SNAPSHOT_INTERVAL: "60"
+    volumes:
+      - ../1_packager_monitor_service.py:/app/monitor.py
+      - /tmp/inspector_snapshots:/tmp/inspector_snapshots
+    networks:
+      - monitoring-dev
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================================
+  # GRAFANA - Dashboard & Visualization
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: inspector-grafana-dev
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_dev_data:/var/lib/grafana
+      - ../deploy/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - monitoring-dev
+    depends_on:
+      - influxdb
+    restart: unless-stopped
+
+networks:
+  monitoring-dev:
+    name: inspector-monitoring-dev
+    driver: bridge
+
+volumes:
+  postgres_dev_data:
+    name: inspector-postgres-dev
+  influxdb_dev_data:
+    name: inspector-influxdb-dev
+  grafana_dev_data:
+    name: inspector-grafana-dev
