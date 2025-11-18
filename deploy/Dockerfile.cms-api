@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+LABEL maintainer="FPT Play SRE Team"
+LABEL description="Inspector CMS API - Channel Management System"
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY deploy/requirements-cms-api.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements-cms-api.txt
+
+# Copy application
+COPY 2_cms_api_flask.py app.py
+
+# Create snapshot directory
+RUN mkdir -p /tmp/inspector_snapshots
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
+    CMD curl -f http://localhost:5000/api/v1/health || exit 1
+
+# Expose port
+EXPOSE 5000
+
+# Run application
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "60", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
