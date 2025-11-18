@@ -17,6 +17,16 @@ import m3u8
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 import hashlib
+import subprocess
+import sys
+
+# Try to import L1 Headend Monitor
+sys.path.append('/opt/Inspector')
+try:
+    from l1_headend_monitor import L1HeadendMonitor
+    L1_MONITOR_AVAILABLE = True
+except ImportError:
+    L1_MONITOR_AVAILABLE = False
 
 # ============================================================================
 # CONFIGURATION
@@ -111,6 +121,8 @@ class PackagerMonitor:
         self.write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
         self.executor = ThreadPoolExecutor(max_workers=config.max_workers)
         self.metric_cache = {}  # Store last metrics for comparison
+        self.l1_monitor = L1HeadendMonitor() if L1_MONITOR_AVAILABLE else None
+        self.last_l1_analysis = {}  # Track last L1 analysis time per input
     
     def run(self):
         """Main monitoring loop"""
