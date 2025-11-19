@@ -204,6 +204,63 @@ class TR101290Metrics:
     pcr_interval_ms: float = 0.0
     timestamp: datetime = None
 
+@dataclass
+class MDIMetrics:
+    """Media Delivery Index (MDI) - RFC 4445 Network Transport Metrics"""
+    input_id: int
+    input_name: str
+
+    # MDI Core Metrics
+    df: float = 0.0                    # Delay Factor (ms) - IP packet jitter
+    mlr: float = 0.0                   # Media Loss Rate (packets/sec)
+
+    # Network Statistics
+    packets_received: int = 0
+    packets_lost: int = 0
+    packets_out_of_order: int = 0
+
+    # Buffer Management
+    buffer_depth: int = 0              # Current buffer fill (bytes)
+    buffer_max: int = 0                # Maximum buffer size (bytes)
+    buffer_utilization: float = 0.0    # Buffer fill percentage
+
+    # Traffic Rate
+    input_rate_mbps: float = 0.0       # Actual input bitrate (Mbps)
+    output_rate_mbps: float = 0.0      # Expected output bitrate (Mbps)
+    traffic_overhead: float = 0.0      # Overhead percentage
+
+    # Jitter Analysis
+    inter_arrival_time_ms: float = 0.0 # Average packet inter-arrival time
+    jitter_ms: float = 0.0             # Packet delay variation
+    max_jitter_ms: float = 0.0         # Maximum jitter observed
+
+    timestamp: datetime = None
+
+@dataclass
+class QoEMetrics:
+    """Quality of Experience (QoE) Metrics - Video & Audio Quality"""
+    input_id: int
+    input_name: str
+
+    # Video Quality
+    black_frames_detected: int = 0     # Number of black frames
+    freeze_frames_detected: int = 0    # Number of frozen frames
+    video_pid_active: bool = False     # Video PID is transmitting
+    video_bitrate_mbps: float = 0.0    # Video stream bitrate
+
+    # Audio Quality
+    audio_silence_detected: int = 0    # Silence detection count
+    audio_pid_active: bool = False     # Audio PID is transmitting
+    audio_loudness_lufs: float = 0.0   # Audio loudness (LUFS)
+    audio_bitrate_kbps: float = 0.0    # Audio stream bitrate
+
+    # Overall Quality Score
+    video_quality_score: float = 5.0   # 1.0 (poor) to 5.0 (excellent)
+    audio_quality_score: float = 5.0   # 1.0 (poor) to 5.0 (excellent)
+    overall_mos: float = 5.0           # Mean Opinion Score
+
+    timestamp: datetime = None
+
 # ============================================================================
 # PACKAGER MONITOR SERVICE
 # ============================================================================
@@ -505,12 +562,24 @@ class PackagerMonitor:
             ts_packet_count = 0
             ts_data_buffer = bytearray()  # Collect TS data for TR 101 290 analysis
 
+            # MDI tracking
+            packet_timestamps = []  # Track packet arrival times for jitter calculation
+            packet_sizes = []  # Track packet sizes
+            last_seq = -1  # Track sequence for packet loss detection
+            packets_lost = 0
+            packets_out_of_order = 0
+
             # Receive packets for the duration of the timeout
             while True:
                 try:
+                    packet_recv_time = time.time()
                     data, addr = sock.recvfrom(self.config.udp_buffer_size)
                     packets_received += 1
                     bytes_received += len(data)
+
+                    # Track timing for MDI
+                    packet_timestamps.append(packet_recv_time)
+                    packet_sizes.append(len(data))
 
                     # Collect TS data for analysis
                     ts_data_buffer.extend(data)
@@ -581,6 +650,34 @@ class PackagerMonitor:
                                f"PMT={'OK' if tr_metrics.pmt_received else 'ERROR'}")
                 except Exception as e:
                     logger.error(f"Error analyzing TR 101 290 for {input_source.input_name}: {e}")
+
+                # Calculate MDI metrics
+                try:
+                    mdi_metrics = self._calculate_mdi_metrics(
+                        input_source, packet_timestamps, packet_sizes,
+                        packets_received, packets_lost, packets_out_of_order,
+                        bytes_received, duration, bitrate_mbps
+                    )
+                    self._push_mdi_metrics(mdi_metrics)
+                    logger.debug(f"MDI for {input_source.input_name}: "
+                               f"DF={mdi_metrics.df:.2f}ms, MLR={mdi_metrics.mlr:.2f}pps, "
+                               f"Jitter={mdi_metrics.jitter_ms:.2f}ms, "
+                               f"Buffer={mdi_metrics.buffer_utilization:.1f}%")
+                except Exception as e:
+                    logger.error(f"Error calculating MDI for {input_source.input_name}: {e}")
+
+                # Calculate QoE metrics (basic version)
+                try:
+                    qoe_metrics = self._calculate_qoe_metrics(
+                        input_source, bytes(ts_data_buffer), bitrate_mbps, tr_metrics
+                    )
+                    self._push_qoe_metrics(qoe_metrics)
+                    logger.debug(f"QoE for {input_source.input_name}: "
+                               f"MOS={qoe_metrics.overall_mos:.2f}, "
+                               f"Video={'Active' if qoe_metrics.video_pid_active else 'Inactive'}, "
+                               f"Audio={'Active' if qoe_metrics.audio_pid_active else 'Inactive'}")
+                except Exception as e:
+                    logger.error(f"Error calculating QoE for {input_source.input_name}: {e}")
 
         except Exception as e:
             errors.append(f"UDP probe error: {e}")
@@ -1054,6 +1151,192 @@ class PackagerMonitor:
 
         except Exception as e:
             logger.error(f"Error pushing TR 101 290 metrics: {e}")
+
+    def _calculate_mdi_metrics(self, input_source: InputSource, packet_timestamps: List[float],
+                                packet_sizes: List[int], packets_received: int, packets_lost: int,
+                                packets_out_of_order: int, bytes_received: int, duration: float,
+                                bitrate_mbps: float) -> MDIMetrics:
+        """Calculate Media Delivery Index (MDI) metrics - RFC 4445"""
+        mdi_metrics = MDIMetrics(
+            input_id=input_source.input_id,
+            input_name=input_source.input_name,
+            timestamp=datetime.utcnow()
+        )
+
+        if len(packet_timestamps) < 2:
+            return mdi_metrics
+
+        # Calculate inter-arrival times
+        inter_arrival_times = []
+        for i in range(1, len(packet_timestamps)):
+            iat = (packet_timestamps[i] - packet_timestamps[i-1]) * 1000  # Convert to ms
+            inter_arrival_times.append(iat)
+
+        # Average inter-arrival time
+        if inter_arrival_times:
+            mdi_metrics.inter_arrival_time_ms = sum(inter_arrival_times) / len(inter_arrival_times)
+
+            # Calculate jitter (variation in packet arrival time)
+            mean_iat = mdi_metrics.inter_arrival_time_ms
+            variance = sum((x - mean_iat) ** 2 for x in inter_arrival_times) / len(inter_arrival_times)
+            mdi_metrics.jitter_ms = variance ** 0.5
+            mdi_metrics.max_jitter_ms = max(abs(x - mean_iat) for x in inter_arrival_times)
+
+        # Calculate Delay Factor (DF) - RFC 4445
+        # DF = max buffer depth / bitrate (in ms)
+        # Estimate buffer depth based on packet arrival variation
+        if bitrate_mbps > 0 and mdi_metrics.max_jitter_ms > 0:
+            # Estimated buffer needed to handle jitter
+            buffer_bytes_needed = (bitrate_mbps * 1_000_000 / 8) * (mdi_metrics.max_jitter_ms / 1000)
+            mdi_metrics.buffer_depth = int(buffer_bytes_needed)
+            mdi_metrics.buffer_max = int(buffer_bytes_needed * 1.5)  # 50% safety margin
+            mdi_metrics.buffer_utilization = (mdi_metrics.buffer_depth / mdi_metrics.buffer_max * 100) if mdi_metrics.buffer_max > 0 else 0
+
+            # DF in milliseconds
+            mdi_metrics.df = mdi_metrics.max_jitter_ms
+
+        # Calculate Media Loss Rate (MLR) - RFC 4445
+        # MLR = packets lost / duration
+        if duration > 0:
+            mdi_metrics.mlr = packets_lost / duration
+
+        # Network statistics
+        mdi_metrics.packets_received = packets_received
+        mdi_metrics.packets_lost = packets_lost
+        mdi_metrics.packets_out_of_order = packets_out_of_order
+
+        # Traffic rates
+        mdi_metrics.input_rate_mbps = bitrate_mbps
+        mdi_metrics.output_rate_mbps = bitrate_mbps  # Assuming constant bitrate
+        mdi_metrics.traffic_overhead = 0.0  # Could be calculated if IP/UDP headers are analyzed
+
+        return mdi_metrics
+
+    def _push_mdi_metrics(self, metrics: MDIMetrics):
+        """Push MDI metrics to InfluxDB"""
+        try:
+            # Push MDI core metrics
+            mdi_point = Point("mdi_metrics") \
+                .tag("input_id", str(metrics.input_id)) \
+                .tag("input_name", metrics.input_name) \
+                .field("df", metrics.df) \
+                .field("mlr", metrics.mlr) \
+                .field("jitter_ms", metrics.jitter_ms) \
+                .field("max_jitter_ms", metrics.max_jitter_ms) \
+                .field("inter_arrival_time_ms", metrics.inter_arrival_time_ms) \
+                .field("buffer_depth", metrics.buffer_depth) \
+                .field("buffer_max", metrics.buffer_max) \
+                .field("buffer_utilization", metrics.buffer_utilization) \
+                .field("packets_received", metrics.packets_received) \
+                .field("packets_lost", metrics.packets_lost) \
+                .field("packets_out_of_order", metrics.packets_out_of_order) \
+                .field("input_rate_mbps", metrics.input_rate_mbps) \
+                .field("output_rate_mbps", metrics.output_rate_mbps) \
+                .field("traffic_overhead", metrics.traffic_overhead) \
+                .time(metrics.timestamp)
+
+            self.write_api.write(
+                bucket=self.config.influxdb_bucket,
+                org=self.config.influxdb_org,
+                record=mdi_point
+            )
+
+            logger.debug(f"Pushed MDI metrics for {metrics.input_name}")
+
+        except Exception as e:
+            logger.error(f"Error pushing MDI metrics: {e}")
+
+    def _calculate_qoe_metrics(self, input_source: InputSource, ts_data: bytes,
+                                bitrate_mbps: float, tr_metrics: TR101290Metrics) -> QoEMetrics:
+        """Calculate Quality of Experience (QoE) metrics"""
+        qoe_metrics = QoEMetrics(
+            input_id=input_source.input_id,
+            input_name=input_source.input_name,
+            timestamp=datetime.utcnow()
+        )
+
+        # Track active PIDs
+        video_pids = set()
+        audio_pids = set()
+        pmt_pid = None
+
+        # Parse TS packets to identify active PIDs
+        for offset in range(0, len(ts_data), 188):
+            if offset + 188 > len(ts_data):
+                break
+
+            packet = ts_data[offset:offset+188]
+            if packet[0] != 0x47:
+                continue
+
+            pid = ((packet[1] & 0x1F) << 8) | packet[2]
+
+            # Check for PMT (typically PID 0x1000 or derived from PAT)
+            # For now, assume common video/audio PIDs
+            if 0x100 <= pid <= 0x1FF:  # Common video PID range
+                video_pids.add(pid)
+            elif 0x200 <= pid <= 0x2FF:  # Common audio PID range
+                audio_pids.add(pid)
+
+        # Determine if video/audio are active
+        qoe_metrics.video_pid_active = len(video_pids) > 0
+        qoe_metrics.audio_pid_active = len(audio_pids) > 0
+
+        # Estimate video/audio bitrates (rough approximation)
+        if qoe_metrics.video_pid_active:
+            qoe_metrics.video_bitrate_mbps = bitrate_mbps * 0.85  # Assume 85% for video
+        if qoe_metrics.audio_pid_active:
+            qoe_metrics.audio_bitrate_kbps = (bitrate_mbps * 0.15) * 1000  # Assume 15% for audio
+
+        # Calculate quality scores based on TR 101 290 errors
+        # Video quality score (5.0 = excellent, 1.0 = poor)
+        video_score = 5.0
+        video_score -= min(tr_metrics.sync_byte_error * 0.5, 2.0)
+        video_score -= min(tr_metrics.continuity_count_error * 0.1, 1.5)
+        video_score -= min(tr_metrics.pmt_error * 0.3, 1.0)
+        qoe_metrics.video_quality_score = max(1.0, video_score)
+
+        # Audio quality score (similar calculation)
+        audio_score = 5.0
+        audio_score -= min(tr_metrics.continuity_count_error * 0.1, 1.5)
+        qoe_metrics.audio_quality_score = max(1.0, audio_score)
+
+        # Overall MOS (Mean Opinion Score)
+        # Weighted average: 70% video, 30% audio
+        qoe_metrics.overall_mos = (qoe_metrics.video_quality_score * 0.7 +
+                                    qoe_metrics.audio_quality_score * 0.3)
+
+        return qoe_metrics
+
+    def _push_qoe_metrics(self, metrics: QoEMetrics):
+        """Push QoE metrics to InfluxDB"""
+        try:
+            qoe_point = Point("qoe_metrics") \
+                .tag("input_id", str(metrics.input_id)) \
+                .tag("input_name", metrics.input_name) \
+                .field("black_frames_detected", metrics.black_frames_detected) \
+                .field("freeze_frames_detected", metrics.freeze_frames_detected) \
+                .field("video_pid_active", int(metrics.video_pid_active)) \
+                .field("video_bitrate_mbps", metrics.video_bitrate_mbps) \
+                .field("audio_silence_detected", metrics.audio_silence_detected) \
+                .field("audio_pid_active", int(metrics.audio_pid_active)) \
+                .field("audio_loudness_lufs", metrics.audio_loudness_lufs) \
+                .field("audio_bitrate_kbps", metrics.audio_bitrate_kbps) \
+                .field("video_quality_score", metrics.video_quality_score) \
+                .field("audio_quality_score", metrics.audio_quality_score) \
+                .field("overall_mos", metrics.overall_mos) \
+                .time(metrics.timestamp)
+
+            self.write_api.write(
+                bucket=self.config.influxdb_bucket,
+                org=self.config.influxdb_org,
+                record=qoe_point
+            )
+
+            logger.debug(f"Pushed QoE metrics for {metrics.input_name}")
+
+        except Exception as e:
+            logger.error(f"Error pushing QoE metrics: {e}")
 
 # ============================================================================
 # MAIN
