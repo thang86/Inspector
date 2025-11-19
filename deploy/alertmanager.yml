@@ -1,0 +1,78 @@
+# AlertManager Configuration for Inspector Monitoring
+# Basic configuration without external integrations
+
+global:
+  resolve_timeout: 5m
+
+# Route configuration
+route:
+  # Default receiver
+  receiver: 'default'
+
+  # Group alerts by these labels
+  group_by: ['alertname', 'cluster', 'service']
+
+  # Wait before sending first notification
+  group_wait: 10s
+
+  # Wait before sending notification about new alerts in same group
+  group_interval: 10s
+
+  # Wait before re-sending notification
+  repeat_interval: 3h
+
+  # Child routes
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      continue: true
+      group_wait: 10s
+      group_interval: 5m
+      repeat_interval: 30m
+
+    # Warning alerts
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 30s
+      group_interval: 10m
+      repeat_interval: 4h
+
+# Inhibition rules - suppress certain alerts based on others
+inhibit_rules:
+  # Suppress warning if critical alert is firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
+
+# Receivers configuration
+receivers:
+  # Default receiver - logs only
+  - name: 'default'
+
+  # Critical alerts - logs only (configure Slack/Email when ready)
+  - name: 'critical-alerts'
+
+  # Warning alerts - logs only
+  - name: 'warning-alerts'
+
+# To enable Slack notifications, uncomment and configure:
+#  - name: 'critical-alerts'
+#    slack_configs:
+#      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+#        channel: '#inspector-critical'
+#        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+#        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+# To enable Email notifications, uncomment and configure:
+#    email_configs:
+#      - to: 'ops-team@yourdomain.com'
+#        from: 'alertmanager@yourdomain.com'
+#        smarthost: 'smtp.gmail.com:587'
+#        auth_username: 'your-email@gmail.com'
+#        auth_password: 'YOUR_EMAIL_PASSWORD'
+#        require_tls: true

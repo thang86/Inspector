@@ -42,11 +42,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MonitorConfig:
-    packager_url: str = "http://packager-01.internal"
-    influxdb_url: str = "http://influxdb.monitor.local:8086"
-    influxdb_token: str = "your_influxdb_token"
-    influxdb_org: str = "fpt-play"
-    influxdb_bucket: str = "packager_metrics"
+    packager_url: str = None
+    influxdb_url: str = None
+    influxdb_token: str = None
+    influxdb_org: str = None
+    influxdb_bucket: str = None
 
     # Database
     database_url: str = None
@@ -67,21 +67,40 @@ class MonitorConfig:
     min_ts_packets: int = 100  # minimum packets to receive for valid probe
 
     # Snapshot/Thumbnail
-    enable_snapshots: bool = True
+    enable_snapshots: bool = None
     snapshot_duration: int = 3  # seconds to capture for snapshot
-    snapshot_interval: int = 60  # take snapshot every N seconds
-    snapshot_dir: str = "/tmp/inspector_snapshots"
+    snapshot_interval: int = None
+    snapshot_dir: str = None
 
     # Polling
-    poll_interval: int = 30  # seconds
+    poll_interval: int = None
     max_workers: int = 10
 
     def __post_init__(self):
+        # Read from environment variables with fallback defaults
         if self.database_url is None:
             self.database_url = os.getenv(
                 'DATABASE_URL',
                 'postgresql://monitor_app:secure_password@db.monitor.local/fpt_play_monitoring'
             )
+        if self.influxdb_url is None:
+            self.influxdb_url = os.getenv('INFLUXDB_URL', 'http://influxdb:8086')
+        if self.influxdb_token is None:
+            self.influxdb_token = os.getenv('INFLUXDB_TOKEN', 'your_influxdb_token')
+        if self.influxdb_org is None:
+            self.influxdb_org = os.getenv('INFLUXDB_ORG', 'fpt-play')
+        if self.influxdb_bucket is None:
+            self.influxdb_bucket = os.getenv('INFLUXDB_BUCKET', 'packager_metrics')
+        if self.packager_url is None:
+            self.packager_url = os.getenv('PACKAGER_URL', 'http://packager-01.internal')
+        if self.poll_interval is None:
+            self.poll_interval = int(os.getenv('POLL_INTERVAL', '30'))
+        if self.enable_snapshots is None:
+            self.enable_snapshots = os.getenv('ENABLE_SNAPSHOTS', 'true').lower() in ('true', '1', 'yes')
+        if self.snapshot_interval is None:
+            self.snapshot_interval = int(os.getenv('SNAPSHOT_INTERVAL', '60'))
+        if self.snapshot_dir is None:
+            self.snapshot_dir = os.getenv('SNAPSHOT_DIR', '/tmp/inspector_snapshots')
         if self.channels is None:
             self.channels = [
                 f"CH_TV_HD_{i:03d}" for i in range(1, 51)
@@ -150,6 +169,40 @@ class UDPProbeMetric:
     is_valid: bool
     errors: List[str]
     timestamp: datetime
+
+@dataclass
+class TR101290Metrics:
+    """TR 101 290 DVB Measurement Guidelines metrics"""
+    input_id: int
+    input_name: str
+
+    # Priority 1 - Critical errors
+    ts_sync_loss: int = 0              # Missing 0x47 sync byte
+    sync_byte_error: int = 0           # Invalid sync byte
+    pat_error: int = 0                 # PAT not received
+    continuity_count_error: int = 0    # CC discontinuity
+    pmt_error: int = 0                 # PMT not received
+    pid_error: int = 0                 # Invalid PID
+
+    # Priority 2 - Quality errors
+    transport_error: int = 0           # Transport error indicator
+    crc_error: int = 0                 # CRC mismatch
+    pcr_error: int = 0                 # PCR discontinuity
+    pcr_accuracy_error: int = 0        # PCR jitter
+    pts_error: int = 0                 # PTS discontinuity
+    cat_error: int = 0                 # CAT errors
+
+    # Priority 3 - Informational
+    nit_error: int = 0                 # NIT errors
+    si_repetition_error: int = 0       # SI repetition issues
+    unreferenced_pid: int = 0          # PIDs not in PMT
+
+    # Metadata
+    total_packets: int = 0
+    pat_received: bool = False
+    pmt_received: bool = False
+    pcr_interval_ms: float = 0.0
+    timestamp: datetime = None
 
 # ============================================================================
 # PACKAGER MONITOR SERVICE
@@ -297,6 +350,93 @@ class PackagerMonitor:
             except Exception as e:
                 logger.error(f"Error monitoring {futures[future]}: {e}")
 
+    def _analyze_tr101290(self, ts_data: bytes, input_source: InputSource) -> TR101290Metrics:
+        """Analyze TS stream for TR 101 290 errors"""
+        metrics = TR101290Metrics(
+            input_id=input_source.input_id,
+            input_name=input_source.input_name,
+            timestamp=datetime.utcnow()
+        )
+
+        # Track continuity counters per PID
+        cc_tracker = {}
+        pat_pids = set()
+        pmt_pids = set()
+        pcr_timestamps = []
+
+        # Parse all TS packets
+        for offset in range(0, len(ts_data), 188):
+            if offset + 188 > len(ts_data):
+                break
+
+            packet = ts_data[offset:offset+188]
+            metrics.total_packets += 1
+
+            # P1: Check sync byte (0x47)
+            if packet[0] != 0x47:
+                metrics.sync_byte_error += 1
+                metrics.ts_sync_loss += 1
+                continue
+
+            # Parse TS header
+            transport_error = (packet[1] & 0x80) >> 7
+            payload_start = (packet[1] & 0x40) >> 7
+            pid = ((packet[1] & 0x1F) << 8) | packet[2]
+            adaptation_field = (packet[3] & 0x30) >> 4
+            cc = packet[3] & 0x0F
+
+            # P2: Transport error indicator
+            if transport_error:
+                metrics.transport_error += 1
+
+            # P1: Check continuity counter
+            if pid in cc_tracker:
+                expected_cc = (cc_tracker[pid] + 1) % 16
+                if cc != expected_cc and adaptation_field in (1, 3):  # Has payload
+                    metrics.continuity_count_error += 1
+            cc_tracker[pid] = cc
+
+            # Check for PAT (PID 0x0000)
+            if pid == 0x0000:
+                metrics.pat_received = True
+                pat_pids.add(pid)
+
+            # Check for PMT (typically PID 0x0100 but can vary)
+            if pid in range(0x0010, 0x1FFF) and payload_start:
+                # Simple PMT detection
+                if len(packet) > 5 and packet[4] == 0x02:  # table_id for PMT
+                    metrics.pmt_received = True
+                    pmt_pids.add(pid)
+
+            # Check for PCR
+            if adaptation_field in (2, 3) and len(packet) > 5:
+                adaptation_length = packet[4]
+                if adaptation_length > 0 and len(packet) > 5 + adaptation_length:
+                    pcr_flag = (packet[5] & 0x10) >> 4
+                    if pcr_flag and adaptation_length >= 7:
+                        # Extract PCR (33 bits + 6 bits reserved + 9 bits extension)
+                        pcr_base = (packet[6] << 25) | (packet[7] << 17) | (packet[8] << 9) | (packet[9] << 1) | ((packet[10] & 0x80) >> 7)
+                        pcr_ms = pcr_base / 90.0  # Convert to milliseconds
+                        pcr_timestamps.append(pcr_ms)
+
+        # P1: PAT/PMT errors
+        if not metrics.pat_received:
+            metrics.pat_error = 1
+        if not metrics.pmt_received:
+            metrics.pmt_error = 1
+
+        # Calculate PCR interval
+        if len(pcr_timestamps) >= 2:
+            intervals = [pcr_timestamps[i+1] - pcr_timestamps[i] for i in range(len(pcr_timestamps)-1)]
+            metrics.pcr_interval_ms = sum(intervals) / len(intervals) if intervals else 0
+
+            # P2: PCR accuracy error (should be < 40ms between PCRs)
+            for interval in intervals:
+                if interval > 40:
+                    metrics.pcr_accuracy_error += 1
+
+        return metrics
+
     def monitor_input(self, input_source: InputSource):
         """Monitor single input based on its type"""
         try:
@@ -363,6 +503,7 @@ class PackagerMonitor:
 
             start_time = time.time()
             ts_packet_count = 0
+            ts_data_buffer = bytearray()  # Collect TS data for TR 101 290 analysis
 
             # Receive packets for the duration of the timeout
             while True:
@@ -370,6 +511,9 @@ class PackagerMonitor:
                     data, addr = sock.recvfrom(self.config.udp_buffer_size)
                     packets_received += 1
                     bytes_received += len(data)
+
+                    # Collect TS data for analysis
+                    ts_data_buffer.extend(data)
 
                     # Validate TS packets (each should be 188 bytes and start with 0x47)
                     if len(data) % 188 == 0:
@@ -412,7 +556,7 @@ class PackagerMonitor:
                     f"{packets_received} packets received"
                 )
 
-            # Push metrics
+            # Push basic metrics
             self._push_udp_probe_metric(UDPProbeMetric(
                 input_id=input_source.input_id,
                 input_name=input_source.input_name,
@@ -424,6 +568,19 @@ class PackagerMonitor:
                 errors=errors,
                 timestamp=datetime.utcnow()
             ))
+
+            # Analyze TR 101 290 errors if we have valid data
+            if is_valid and len(ts_data_buffer) > 0:
+                try:
+                    tr_metrics = self._analyze_tr101290(bytes(ts_data_buffer), input_source)
+                    self._push_tr101290_metrics(tr_metrics)
+                    logger.debug(f"TR 101 290 analysis for {input_source.input_name}: "
+                               f"P1 errors: sync={tr_metrics.sync_byte_error}, "
+                               f"cc={tr_metrics.continuity_count_error}, "
+                               f"PAT={'OK' if tr_metrics.pat_received else 'ERROR'}, "
+                               f"PMT={'OK' if tr_metrics.pmt_received else 'ERROR'}")
+                except Exception as e:
+                    logger.error(f"Error analyzing TR 101 290 for {input_source.input_name}: {e}")
 
         except Exception as e:
             errors.append(f"UDP probe error: {e}")
@@ -830,6 +987,73 @@ class PackagerMonitor:
 
         except Exception as e:
             logger.error(f"Error pushing UDP probe metric: {e}")
+
+    def _push_tr101290_metrics(self, metrics: TR101290Metrics):
+        """Push TR 101 290 metrics to InfluxDB"""
+        try:
+            # Push Priority 1 errors
+            p1_point = Point("tr101290_p1") \
+                .tag("input_id", str(metrics.input_id)) \
+                .tag("input_name", metrics.input_name) \
+                .field("ts_sync_loss", metrics.ts_sync_loss) \
+                .field("sync_byte_error", metrics.sync_byte_error) \
+                .field("pat_error", metrics.pat_error) \
+                .field("continuity_count_error", metrics.continuity_count_error) \
+                .field("pmt_error", metrics.pmt_error) \
+                .field("pid_error", metrics.pid_error) \
+                .field("total_p1_errors", metrics.ts_sync_loss + metrics.sync_byte_error +
+                       metrics.pat_error + metrics.continuity_count_error +
+                       metrics.pmt_error + metrics.pid_error) \
+                .time(metrics.timestamp)
+
+            # Push Priority 2 errors
+            p2_point = Point("tr101290_p2") \
+                .tag("input_id", str(metrics.input_id)) \
+                .tag("input_name", metrics.input_name) \
+                .field("transport_error", metrics.transport_error) \
+                .field("crc_error", metrics.crc_error) \
+                .field("pcr_error", metrics.pcr_error) \
+                .field("pcr_accuracy_error", metrics.pcr_accuracy_error) \
+                .field("pts_error", metrics.pts_error) \
+                .field("cat_error", metrics.cat_error) \
+                .field("total_p2_errors", metrics.transport_error + metrics.crc_error +
+                       metrics.pcr_error + metrics.pcr_accuracy_error +
+                       metrics.pts_error + metrics.cat_error) \
+                .time(metrics.timestamp)
+
+            # Push Priority 3 errors
+            p3_point = Point("tr101290_p3") \
+                .tag("input_id", str(metrics.input_id)) \
+                .tag("input_name", metrics.input_name) \
+                .field("nit_error", metrics.nit_error) \
+                .field("si_repetition_error", metrics.si_repetition_error) \
+                .field("unreferenced_pid", metrics.unreferenced_pid) \
+                .field("total_p3_errors", metrics.nit_error + metrics.si_repetition_error +
+                       metrics.unreferenced_pid) \
+                .time(metrics.timestamp)
+
+            # Push metadata
+            meta_point = Point("tr101290_metadata") \
+                .tag("input_id", str(metrics.input_id)) \
+                .tag("input_name", metrics.input_name) \
+                .field("total_packets", metrics.total_packets) \
+                .field("pat_received", int(metrics.pat_received)) \
+                .field("pmt_received", int(metrics.pmt_received)) \
+                .field("pcr_interval_ms", metrics.pcr_interval_ms) \
+                .time(metrics.timestamp)
+
+            # Write all points
+            for point in [p1_point, p2_point, p3_point, meta_point]:
+                self.write_api.write(
+                    bucket=self.config.influxdb_bucket,
+                    org=self.config.influxdb_org,
+                    record=point
+                )
+
+            logger.debug(f"Pushed TR 101 290 metrics for {metrics.input_name}")
+
+        except Exception as e:
+            logger.error(f"Error pushing TR 101 290 metrics: {e}")
 
 # ============================================================================
 # MAIN

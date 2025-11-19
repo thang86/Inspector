@@ -1,0 +1,59 @@
+# Prometheus Configuration for Inspector Monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'inspector-monitoring'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Load rules
+rule_files:
+  - 'alert_rules.yml'
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # CMS API monitoring
+  - job_name: 'cms-api'
+    static_configs:
+      - targets: ['cms-api:5000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # InfluxDB monitoring
+  - job_name: 'influxdb'
+    static_configs:
+      - targets: ['influxdb:8086']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # PostgreSQL monitoring (via postgres_exporter if deployed)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+    scrape_interval: 30s
+
+  # Packager Monitor (if it exposes metrics)
+  - job_name: 'packager-monitor'
+    static_configs:
+      - targets: ['packager-monitor:8080']
+    scrape_interval: 30s
+    # Adjust port if different
+
+  # Node Exporter (if deployed for system metrics)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s

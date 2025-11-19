@@ -1,0 +1,288 @@
+version: '3.8'
+
+# FPT Play Inspector - Production Monitoring Stack
+# Full deployment with all monitoring services
+
+services:
+  # ============================================================================
+  # POSTGRESQL - Database
+  # ============================================================================
+  postgres:
+    image: postgres:14-alpine
+    container_name: inspector-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fpt_play_monitoring}
+      POSTGRES_USER: ${POSTGRES_USER:-monitor_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-monitor_app} -d ${POSTGRES_DB:-fpt_play_monitoring}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # INFLUXDB - Time-Series Metrics Database
+  # ============================================================================
+  influxdb:
+    image: influxdb:2-alpine
+    container_name: inspector-influxdb
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-fpt-play}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-packager_metrics}
+      DOCKER_INFLUXDB_INIT_RETENTION: ${INFLUXDB_RETENTION:-30d}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN}
+    ports:
+      - "${INFLUXDB_PORT:-8086}:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+      - influxdb_config:/etc/influxdb2
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # PROMETHEUS - Metrics Scraper & Storage
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: inspector-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - prometheus_data:/prometheus
+    networks:
+      - monitoring
+    depends_on:
+      - alertmanager
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # ALERTMANAGER - Alert Management & Routing
+  # ============================================================================
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: inspector-alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    networks:
+      - monitoring
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # GRAFANA - Dashboard & Visualization
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: inspector-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GF_SERVER_ROOT_URL:-http://localhost:3000}
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+      - influxdb
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # CMS API - Flask REST API
+  # ============================================================================
+  cms-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.cms-api
+    container_name: inspector-cms-api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-monitor_app}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fpt_play_monitoring}
+      FLASK_ENV: ${FLASK_ENV:-production}
+      FLASK_DEBUG: 0
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-fpt-play}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-packager_metrics}
+    ports:
+      - "${CMS_API_PORT:-5000}:5000"
+    volumes:
+      - ../2_cms_api_flask.py:/app/app.py
+      - ${SNAPSHOT_DIR:-/home/thanghl/Inspector/snapshots}:${SNAPSHOT_DIR:-/home/thanghl/Inspector/snapshots}
+    networks:
+      - monitoring
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # PACKAGER MONITOR - Real-time segment monitoring
+  # ============================================================================
+  packager-monitor:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.packager-monitor
+    container_name: inspector-monitor
+    network_mode: "host"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-monitor_app}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB:-fpt_play_monitoring}
+      INFLUXDB_URL: http://localhost:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-fpt-play}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-packager_metrics}
+      POLL_INTERVAL: ${POLL_INTERVAL:-30}
+      ENABLE_SNAPSHOTS: ${ENABLE_SNAPSHOTS:-true}
+      SNAPSHOT_DIR: ${SNAPSHOT_DIR:-/home/thanghl/Inspector/snapshots}
+      SNAPSHOT_INTERVAL: ${SNAPSHOT_INTERVAL:-60}
+    volumes:
+      - ../1_packager_monitor_service.py:/app/monitor.py
+      - ${SNAPSHOT_DIR:-/home/thanghl/Inspector/snapshots}:${SNAPSHOT_DIR:-/home/thanghl/Inspector/snapshots}
+      - monitor_logs:/var/log
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # NGINX - Reverse Proxy & Load Balancer
+  # ============================================================================
+  nginx:
+    image: nginx:alpine
+    container_name: inspector-nginx
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      - monitoring
+    depends_on:
+      - cms-api
+      - grafana
+      - prometheus
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # UI DASHBOARD - React Web Interface
+  # ============================================================================
+  ui-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: inspector-ui
+    ports:
+      - "${UI_PORT:-8080}:80"
+    networks:
+      - monitoring
+    depends_on:
+      - cms-api
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  monitoring:
+    name: inspector-monitoring
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: inspector-postgres-data
+  influxdb_data:
+    name: inspector-influxdb-data
+  influxdb_config:
+    name: inspector-influxdb-config
+  prometheus_data:
+    name: inspector-prometheus-data
+  alertmanager_data:
+    name: inspector-alertmanager-data
+  grafana_data:
+    name: inspector-grafana-data
+  monitor_logs:
