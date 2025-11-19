@@ -972,8 +972,8 @@ const TR101290Panel = ({ metrics, inputName }) => {
             />
             <MetadataItem
               label="PCR Interval"
-              value={metadata.pcr_interval_ms ? `${metadata.pcr_interval_ms.toFixed(2)} ms` : 'N/A'}
-              success={metadata.pcr_interval_ms && metadata.pcr_interval_ms >= 10 && metadata.pcr_interval_ms <= 40}
+              value={metadata.pcr_interval_ms != null ? `${metadata.pcr_interval_ms.toFixed(2)} ms` : 'N/A'}
+              success={metadata.pcr_interval_ms != null && metadata.pcr_interval_ms >= 10 && metadata.pcr_interval_ms <= 40}
             />
           </div>
         </div>
@@ -1104,12 +1104,12 @@ const MDIPanel = ({ metrics, inputName }) => {
             />
             <MDIMetric
               label="Buffer Depth"
-              value={`${(metrics.buffer_depth / 1024).toFixed(1) || 0} KB`}
+              value={`${((metrics.buffer_depth ?? 0) / 1024).toFixed(1)} KB`}
               description="Current buffer size"
             />
             <MDIMetric
               label="Buffer Max"
-              value={`${(metrics.buffer_max / 1024).toFixed(1) || 0} KB`}
+              value={`${((metrics.buffer_max ?? 0) / 1024).toFixed(1)} KB`}
               description="Maximum buffer capacity"
             />
           </div>
@@ -1149,17 +1149,17 @@ const MDIPanel = ({ metrics, inputName }) => {
           <div className="mdi-analysis">
             {metrics.df > 30 && (
               <div className="analysis-alert warning">
-                ⚠ High delay factor ({metrics.df.toFixed(2)}ms) indicates network congestion or jitter issues
+                ⚠ High delay factor ({metrics.df?.toFixed(2)}ms) indicates network congestion or jitter issues
               </div>
             )}
             {metrics.mlr > 0 && (
               <div className="analysis-alert error">
-                🔴 Packet loss detected ({metrics.mlr.toFixed(2)} pps) - This causes Continuity Count Errors
+                🔴 Packet loss detected ({metrics.mlr?.toFixed(2)} pps) - This causes Continuity Count Errors
               </div>
             )}
             {metrics.buffer_utilization > 85 && (
               <div className="analysis-alert error">
-                🔴 Buffer near capacity ({metrics.buffer_utilization.toFixed(1)}%) - Risk of overflow
+                🔴 Buffer near capacity ({metrics.buffer_utilization?.toFixed(1)}%) - Risk of overflow
               </div>
             )}
             {metrics.jitter_ms < 5 && metrics.mlr === 0 && (
