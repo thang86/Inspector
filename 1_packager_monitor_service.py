@@ -237,6 +237,28 @@ class MDIMetrics:
     timestamp: datetime = None
 
 @dataclass
+class CodecInfo:
+    """Stream Codec Information from ffprobe"""
+    input_id: int
+    input_name: str
+
+    # Video Codec
+    video_codec: str = "Unknown"       # e.g., h264, hevc, mpeg2video
+    video_profile: str = "Unknown"     # e.g., High, Main
+    video_level: str = "Unknown"       # e.g., 4.0, 5.1
+    video_resolution: str = "Unknown"  # e.g., 1920x1080
+    video_fps: str = "Unknown"         # e.g., 25.00, 29.97
+    video_bitrate_kbps: float = 0.0    # Video bitrate
+
+    # Audio Codec
+    audio_codec: str = "Unknown"       # e.g., aac, mp3, ac3
+    audio_channels: str = "Unknown"    # e.g., stereo, 5.1
+    audio_sample_rate: str = "Unknown" # e.g., 48000 Hz
+    audio_bitrate_kbps: float = 0.0    # Audio bitrate
+
+    timestamp: datetime = None
+
+@dataclass
 class QoEMetrics:
     """Quality of Experience (QoE) Metrics - Video & Audio Quality"""
     input_id: int
@@ -252,6 +274,8 @@ class QoEMetrics:
     audio_silence_detected: int = 0    # Silence detection count
     audio_pid_active: bool = False     # Audio PID is transmitting
     audio_loudness_lufs: float = 0.0   # Audio loudness (LUFS)
+    audio_loudness_i: float = 0.0      # Integrated loudness (I)
+    audio_loudness_lra: float = 0.0    # Loudness range (LRA)
     audio_bitrate_kbps: float = 0.0    # Audio stream bitrate
 
     # Overall Quality Score
@@ -494,6 +518,160 @@ class PackagerMonitor:
 
         return metrics
 
+    def _analyze_stream_with_ffprobe(self, input_source: InputSource, ts_data: bytes) -> tuple:
+        """Analyze stream using ffprobe to get codec info and audio loudness"""
+        codec_info = CodecInfo(
+            input_id=input_source.input_id,
+            input_name=input_source.input_name,
+            timestamp=datetime.utcnow()
+        )
+
+        qoe_metrics = QoEMetrics(
+            input_id=input_source.input_id,
+            input_name=input_source.input_name,
+            timestamp=datetime.utcnow()
+        )
+
+        try:
+            # Save TS data to temporary file for ffprobe analysis
+            with tempfile.NamedTemporaryFile(suffix='.ts', delete=False) as temp_file:
+                temp_file.write(ts_data)
+                temp_path = temp_file.name
+
+            try:
+                # Run ffprobe to get stream information
+                ffprobe_cmd = [
+                    'ffprobe',
+                    '-v', 'quiet',
+                    '-print_format', 'json',
+                    '-show_streams',
+                    '-show_format',
+                    temp_path
+                ]
+
+                result = subprocess.run(
+                    ffprobe_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+
+                if result.returncode == 0:
+                    data = json.loads(result.stdout)
+                    streams = data.get('streams', [])
+
+                    # Parse video stream
+                    video_stream = next((s for s in streams if s.get('codec_type') == 'video'), None)
+                    if video_stream:
+                        codec_info.video_codec = video_stream.get('codec_name', 'Unknown')
+                        codec_info.video_profile = video_stream.get('profile', 'Unknown')
+                        codec_info.video_level = str(video_stream.get('level', 'Unknown'))
+
+                        width = video_stream.get('width', 0)
+                        height = video_stream.get('height', 0)
+                        codec_info.video_resolution = f"{width}x{height}" if width and height else "Unknown"
+
+                        # Parse FPS
+                        fps_str = video_stream.get('r_frame_rate', '0/1')
+                        if '/' in fps_str:
+                            num, den = fps_str.split('/')
+                            if int(den) > 0:
+                                codec_info.video_fps = f"{int(num) / int(den):.2f}"
+
+                        # Bitrate
+                        bitrate = video_stream.get('bit_rate')
+                        if bitrate:
+                            codec_info.video_bitrate_kbps = int(bitrate) / 1000
+                            qoe_metrics.video_bitrate_mbps = int(bitrate) / 1_000_000
+
+                        qoe_metrics.video_pid_active = True
+
+                    # Parse audio stream
+                    audio_stream = next((s for s in streams if s.get('codec_type') == 'audio'), None)
+                    if audio_stream:
+                        codec_info.audio_codec = audio_stream.get('codec_name', 'Unknown')
+
+                        # Channels
+                        channels = audio_stream.get('channels', 0)
+                        channel_layout = audio_stream.get('channel_layout', '')
+                        if channel_layout:
+                            codec_info.audio_channels = channel_layout
+                        elif channels == 2:
+                            codec_info.audio_channels = "stereo"
+                        elif channels == 1:
+                            codec_info.audio_channels = "mono"
+                        elif channels == 6:
+                            codec_info.audio_channels = "5.1"
+                        else:
+                            codec_info.audio_channels = f"{channels} ch"
+
+                        # Sample rate
+                        sample_rate = audio_stream.get('sample_rate')
+                        if sample_rate:
+                            codec_info.audio_sample_rate = f"{int(sample_rate)} Hz"
+
+                        # Bitrate
+                        bitrate = audio_stream.get('bit_rate')
+                        if bitrate:
+                            codec_info.audio_bitrate_kbps = int(bitrate) / 1000
+                            qoe_metrics.audio_bitrate_kbps = int(bitrate) / 1000
+
+                        qoe_metrics.audio_pid_active = True
+
+                # Run ffmpeg with ebur128 filter for LUFS analysis
+                if qoe_metrics.audio_pid_active:
+                    ffmpeg_cmd = [
+                        'ffmpeg',
+                        '-i', temp_path,
+                        '-t', '5',  # Analyze first 5 seconds
+                        '-af', 'ebur128=framelog=verbose',
+                        '-f', 'null',
+                        '-'
+                    ]
+
+                    result = subprocess.run(
+                        ffmpeg_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=15
+                    )
+
+                    # Parse LUFS from ffmpeg output
+                    output = result.stderr
+                    for line in output.split('\n'):
+                        if 'I:' in line and 'LUFS' in line:
+                            # Extract integrated loudness
+                            parts = line.split('I:')
+                            if len(parts) > 1:
+                                lufs_str = parts[1].split('LUFS')[0].strip()
+                                try:
+                                    qoe_metrics.audio_loudness_lufs = float(lufs_str)
+                                    qoe_metrics.audio_loudness_i = float(lufs_str)
+                                except ValueError:
+                                    pass
+
+                        if 'LRA:' in line and 'LU' in line:
+                            # Extract loudness range
+                            parts = line.split('LRA:')
+                            if len(parts) > 1:
+                                lra_str = parts[1].split('LU')[0].strip()
+                                try:
+                                    qoe_metrics.audio_loudness_lra = float(lra_str)
+                                except ValueError:
+                                    pass
+
+            finally:
+                # Clean up temp file
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+
+        except Exception as e:
+            logger.error(f"Error analyzing stream with ffprobe for {input_source.input_name}: {e}")
+
+        return codec_info, qoe_metrics
+
     def monitor_input(self, input_source: InputSource):
         """Monitor single input based on its type"""
         try:
@@ -666,18 +844,26 @@ class PackagerMonitor:
                 except Exception as e:
                     logger.error(f"Error calculating MDI for {input_source.input_name}: {e}")
 
-                # Calculate QoE metrics (basic version)
+                # Analyze codecs and calculate QoE metrics with ffprobe
                 try:
-                    qoe_metrics = self._calculate_qoe_metrics(
-                        input_source, bytes(ts_data_buffer), bitrate_mbps, tr_metrics
+                    codec_info, qoe_metrics = self._analyze_stream_with_ffprobe(
+                        input_source, bytes(ts_data_buffer)
                     )
+
+                    # Calculate MOS based on TR 101 290 errors, bitrate, and packet loss
+                    qoe_metrics.overall_mos = self._calculate_mos(
+                        tr_metrics, bitrate_mbps, packets_lost, packets_received
+                    )
+
+                    self._push_codec_info(codec_info)
                     self._push_qoe_metrics(qoe_metrics)
-                    logger.debug(f"QoE for {input_source.input_name}: "
-                               f"MOS={qoe_metrics.overall_mos:.2f}, "
-                               f"Video={'Active' if qoe_metrics.video_pid_active else 'Inactive'}, "
-                               f"Audio={'Active' if qoe_metrics.audio_pid_active else 'Inactive'}")
+
+                    logger.info(f"Stream analysis for {input_source.input_name}: "
+                               f"Video={codec_info.video_codec} {codec_info.video_resolution}@{codec_info.video_fps}fps, "
+                               f"Audio={codec_info.audio_codec} {codec_info.audio_channels}, "
+                               f"LUFS={qoe_metrics.audio_loudness_lufs:.1f}, MOS={qoe_metrics.overall_mos:.2f}")
                 except Exception as e:
-                    logger.error(f"Error calculating QoE for {input_source.input_name}: {e}")
+                    logger.error(f"Error analyzing stream for {input_source.input_name}: {e}")
 
         except Exception as e:
             errors.append(f"UDP probe error: {e}")
@@ -1321,6 +1507,8 @@ class PackagerMonitor:
                 .field("audio_silence_detected", metrics.audio_silence_detected) \
                 .field("audio_pid_active", int(metrics.audio_pid_active)) \
                 .field("audio_loudness_lufs", metrics.audio_loudness_lufs) \
+                .field("audio_loudness_i", metrics.audio_loudness_i) \
+                .field("audio_loudness_lra", metrics.audio_loudness_lra) \
                 .field("audio_bitrate_kbps", metrics.audio_bitrate_kbps) \
                 .field("video_quality_score", metrics.video_quality_score) \
                 .field("audio_quality_score", metrics.audio_quality_score) \
@@ -1337,6 +1525,69 @@ class PackagerMonitor:
 
         except Exception as e:
             logger.error(f"Error pushing QoE metrics: {e}")
+
+    def _push_codec_info(self, codec_info: CodecInfo):
+        """Push codec information to InfluxDB"""
+        try:
+            codec_point = Point("codec_info") \
+                .tag("input_id", str(codec_info.input_id)) \
+                .tag("input_name", codec_info.input_name) \
+                .tag("video_codec", codec_info.video_codec) \
+                .tag("audio_codec", codec_info.audio_codec) \
+                .field("video_profile", codec_info.video_profile) \
+                .field("video_level", codec_info.video_level) \
+                .field("video_resolution", codec_info.video_resolution) \
+                .field("video_fps", codec_info.video_fps) \
+                .field("video_bitrate_kbps", codec_info.video_bitrate_kbps) \
+                .field("audio_channels", codec_info.audio_channels) \
+                .field("audio_sample_rate", codec_info.audio_sample_rate) \
+                .field("audio_bitrate_kbps", codec_info.audio_bitrate_kbps) \
+                .time(codec_info.timestamp)
+
+            self.write_api.write(
+                bucket=self.config.influxdb_bucket,
+                org=self.config.influxdb_org,
+                record=codec_point
+            )
+
+            logger.debug(f"Pushed codec info for {codec_info.input_name}")
+
+        except Exception as e:
+            logger.error(f"Error pushing codec info: {e}")
+
+    def _calculate_mos(self, tr_metrics: TR101290Metrics, bitrate_mbps: float,
+                       packets_lost: int, packets_received: int) -> float:
+        """Calculate MOS (Mean Opinion Score) based on multiple quality factors"""
+        # Start with perfect score
+        mos = 5.0
+
+        # Deduct for TR 101 290 P1 errors (critical) - 0.1 per error, max 2.0 deduction
+        p1_total = (tr_metrics.sync_byte_error + tr_metrics.continuity_count_error +
+                    tr_metrics.pat_error + tr_metrics.pmt_error + tr_metrics.pid_error)
+        mos -= min(p1_total * 0.1, 2.0)
+
+        # Deduct for TR 101 290 P2 errors (less severe) - 0.02 per error, max 0.5 deduction
+        p2_total = (tr_metrics.transport_error + tr_metrics.crc_error +
+                    tr_metrics.pcr_error + tr_metrics.pts_error)
+        mos -= min(p2_total * 0.02, 0.5)
+
+        # Deduct for packet loss - significant impact
+        if packets_received > 0:
+            loss_rate = packets_lost / packets_received
+            mos -= min(loss_rate * 10, 1.5)  # Max 1.5 deduction for packet loss
+
+        # Deduct for bitrate issues (assuming target around 1.0 Mbps for SD, 5.0 for HD)
+        if bitrate_mbps < 0.5:
+            mos -= 1.0  # Very low bitrate
+        elif bitrate_mbps < 0.8:
+            mos -= 0.5  # Below acceptable
+        elif bitrate_mbps > 20:
+            mos -= 0.3  # Unnecessarily high (might indicate errors)
+
+        # Ensure MOS is between 1.0 and 5.0
+        mos = max(1.0, min(5.0, mos))
+
+        return mos
 
 # ============================================================================
 # MAIN
