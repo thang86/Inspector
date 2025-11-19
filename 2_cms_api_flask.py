@@ -7,10 +7,12 @@ REST API for channel configuration, templates, alert management
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 from datetime import datetime, timedelta
 import logging
 import os
 import glob
+from influxdb_client import InfluxDBClient
 
 # ============================================================================
 # CONFIGURATION
@@ -31,6 +33,21 @@ db = SQLAlchemy(app)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# InfluxDB Configuration
+INFLUXDB_URL = os.getenv('INFLUXDB_URL', 'http://influxdb:8086')
+INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN', 'your_token')
+INFLUXDB_ORG = os.getenv('INFLUXDB_ORG', 'fpt-play')
+INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET', 'packager_metrics')
+
+# Initialize InfluxDB client
+try:
+    influx_client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
+    influx_query_api = influx_client.query_api()
+    logger.info(f"Connected to InfluxDB at {INFLUXDB_URL}")
+except Exception as e:
+    logger.error(f"Failed to connect to InfluxDB: {e}")
+    influx_query_api = None
 
 # ============================================================================
 # DATABASE MODELS
@@ -821,6 +838,190 @@ def debug_system():
         }), 500
 
 # ============================================================================
+# METRICS ENDPOINTS
+# ============================================================================
+
+@app.route('/api/v1/metrics/stream/<int:input_id>', methods=['GET'])
+def get_stream_metrics(input_id):
+    """Get real-time stream metrics for an input"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        # Get time range from query params (default: last 5 minutes)
+        minutes = request.args.get('minutes', 5, type=int)
+
+        # Query for basic stream metrics
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "udp_probe_metric")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> filter(fn: (r) => r["_field"] == "bitrate_mbps" or r["_field"] == "packets_received" or r["_field"] == "bytes_received")
+        '''
+
+        tables = influx_query_api.query(query, org=INFLUXDB_ORG)
+
+        metrics = []
+        for table in tables:
+            for record in table.records:
+                metrics.append({
+                    'time': record.get_time().isoformat(),
+                    'field': record.get_field(),
+                    'value': record.get_value(),
+                    'input_name': record.values.get('input_name', '')
+                })
+
+        return jsonify({
+            'status': 'ok',
+            'input_id': input_id,
+            'metrics': metrics,
+            'count': len(metrics)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching stream metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/tr101290/<int:input_id>', methods=['GET'])
+def get_tr101290_metrics(input_id):
+    """Get TR 101 290 error metrics for an input"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        minutes = request.args.get('minutes', 5, type=int)
+
+        # Query P1, P2, P3 errors
+        p1_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "tr101290_p1")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        p2_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "tr101290_p2")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        p3_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "tr101290_p3")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        meta_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "tr101290_metadata")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        p1_data = {}
+        p2_data = {}
+        p3_data = {}
+        metadata = {}
+
+        for table in influx_query_api.query(p1_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                p1_data[record.get_field()] = record.get_value()
+
+        for table in influx_query_api.query(p2_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                p2_data[record.get_field()] = record.get_value()
+
+        for table in influx_query_api.query(p3_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                p3_data[record.get_field()] = record.get_value()
+
+        for table in influx_query_api.query(meta_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                metadata[record.get_field()] = record.get_value()
+
+        return jsonify({
+            'status': 'ok',
+            'input_id': input_id,
+            'priority_1': p1_data,
+            'priority_2': p2_data,
+            'priority_3': p3_data,
+            'metadata': metadata
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching TR 101 290 metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/status/<int:input_id>', methods=['GET'])
+def get_input_status(input_id):
+    """Get comprehensive status for an input"""
+    try:
+        # Get input info from database
+        input_obj = db.session.query(Input).filter_by(input_id=input_id).first()
+        if not input_obj:
+            return jsonify({'error': 'Input not found'}), 404
+
+        status = {
+            'input_id': input_id,
+            'input_name': input_obj.input_name,
+            'input_url': input_obj.input_url,
+            'input_type': input_obj.input_type,
+            'enabled': input_obj.enabled,
+            'last_snapshot': input_obj.last_snapshot_at.isoformat() if input_obj.last_snapshot_at else None
+        }
+
+        # Get latest metrics from InfluxDB if available
+        if influx_query_api:
+            try:
+                # Get latest bitrate
+                query = f'''
+                from(bucket: "{INFLUXDB_BUCKET}")
+                |> range(start: -5m)
+                |> filter(fn: (r) => r["_measurement"] == "udp_probe_metric")
+                |> filter(fn: (r) => r["input_id"] == "{input_id}")
+                |> filter(fn: (r) => r["_field"] == "bitrate_mbps")
+                |> last()
+                '''
+
+                for table in influx_query_api.query(query, org=INFLUXDB_ORG):
+                    for record in table.records:
+                        status['bitrate_mbps'] = record.get_value()
+                        status['last_update'] = record.get_time().isoformat()
+
+                # Get TR 101 290 status
+                tr_query = f'''
+                from(bucket: "{INFLUXDB_BUCKET}")
+                |> range(start: -5m)
+                |> filter(fn: (r) => r["_measurement"] == "tr101290_p1")
+                |> filter(fn: (r) => r["input_id"] == "{input_id}")
+                |> filter(fn: (r) => r["_field"] == "total_p1_errors")
+                |> last()
+                '''
+
+                for table in influx_query_api.query(tr_query, org=INFLUXDB_ORG):
+                    for record in table.records:
+                        status['tr101290_p1_errors'] = record.get_value()
+
+            except Exception as e:
+                logger.warning(f"Could not fetch InfluxDB metrics: {e}")
+
+        return jsonify({
+            'status': 'ok',
+            'data': status
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching input status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -829,7 +1030,7 @@ def health_check():
     """Health check endpoint"""
     try:
         # Test database connection
-        db.session.execute('SELECT 1')
+        db.session.execute(text('SELECT 1'))
         
         return jsonify({
             'status': 'healthy',

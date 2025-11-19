@@ -1,0 +1,24 @@
+# Environment files with secrets
+.env.production.local
+.env.production
+.env.local
+.env
+
+# Logs
+*.log
+deploy.log
+
+# SSL certificates
+ssl/
+
+# Snapshots
+../snapshots/
+snapshots/
+
+# Docker volumes
+postgres_data/
+influxdb_data/
+grafana_data/
+
+# Temporary files
+*.tmp

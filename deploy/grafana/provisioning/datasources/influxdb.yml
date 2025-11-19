@@ -1,7 +1,7 @@
 apiVersion: 1
 
 datasources:
-  - name: InfluxDB
+  - name: InfluxDB_Packager_Metrics
     type: influxdb
     access: proxy
     url: http://influxdb:8086
@@ -11,6 +11,6 @@ datasources:
       defaultBucket: packager_metrics
       tlsSkipVerify: true
     secureJsonData:
-      token: dev_influxdb_token_12345
-    isDefault: true
+      token: influx_prod_token_$(openssl rand -hex 16)
     editable: true
+    isDefault: true
