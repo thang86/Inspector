@@ -619,7 +619,7 @@ const MetricsTab = () => {
           const streamData = await streamRes.json();
           // Transform data for charts - CHANGED: Keep in Mbps
           const bitrateData = streamData.metrics
-            .filter(m => m.field === 'bitrate_mbps')
+            .filter(m => m.field === 'bitrate_mbps' && m.value != null)
             .map(m => ({
               time: new Date(m.time).toLocaleTimeString(),
               bitrate: m.value.toFixed(3), // Keep as Mbps
@@ -972,8 +972,8 @@ const TR101290Panel = ({ metrics, inputName }) => {
             />
             <MetadataItem
               label="PCR Interval"
-              value={`${metadata.pcr_interval_ms.toFixed(2)} ms`}
-              success={metadata.pcr_interval_ms >= 10 && metadata.pcr_interval_ms <= 40}
+              value={metadata.pcr_interval_ms ? `${metadata.pcr_interval_ms.toFixed(2)} ms` : 'N/A'}
+              success={metadata.pcr_interval_ms && metadata.pcr_interval_ms >= 10 && metadata.pcr_interval_ms <= 40}
             />
           </div>
         </div>
