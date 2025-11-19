@@ -17,7 +17,6 @@ const Dashboard = () => {
   const [alerts, setAlerts] = useState([]);
   const [inputs, setInputs] = useState([]);
   const [debugInfo, setDebugInfo] = useState(null);
-  const [metrics, setMetrics] = useState({});
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState({ tier: null, is_4k: null });
 
@@ -38,6 +37,7 @@ const Dashboard = () => {
     }, 30000); // Refresh every 30 seconds
 
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, activeTab]);
 
   const fetchChannels = useCallback(async () => {
@@ -259,7 +259,6 @@ const OverviewTab = ({ channels, alerts }) => {
   const critical = alerts.filter(a => a.severity === 'CRITICAL').length;
   const major = alerts.filter(a => a.severity === 'MAJOR').length;
   const monitoring_4k = channels.filter(c => c.is_4k).length;
-  const monitoring_hd = channels.filter(c => !c.is_4k && c.tier <= 2).length;
 
   return (
     <div className="overview-tab">
