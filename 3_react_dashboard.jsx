@@ -1,4 +1,4 @@
-// FPT Play - React Dashboard Component
+// Inspector - React Dashboard Component
 // Real-time channel monitoring, alert management, configuration UI
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -232,7 +232,7 @@ const Header = () => {
   return (
     <div className="header">
       <div className="title">
-        <h1>🎬 FPT Play - Video Monitoring Control Center</h1>
+        <h1>🎬 Inspector - Video Monitoring Control Center</h1>
       </div>
       
       <div className="status-bar">
