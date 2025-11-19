@@ -1,0 +1,21 @@
+Deployment Date: Wed Nov 19 11:51:54 AM +07 2025
+Monitor Service PID: 1335861
+
+Services:
+- InfluxDB: http://localhost:8086
+- CMS API: http://localhost:5000
+- Grafana: http://localhost:3000
+
+New Features:
+- MDI (RFC 4445) Network Metrics
+- QoE (Quality of Experience) Metrics
+- Bitrate display in Mbps
+
+API Endpoints:
+- GET /api/v1/metrics/mdi/<input_id>
+- GET /api/v1/metrics/qoe/<input_id>
+- GET /api/v1/metrics/comprehensive/<input_id>
+
+Logs:
+- Deployment: /home/thanghl/Inspector/deploy/deployment.log
+- Monitor: /home/thanghl/Inspector/deploy/monitor.log

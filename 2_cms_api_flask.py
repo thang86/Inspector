@@ -1021,6 +1021,200 @@ def get_input_status(input_id):
         logger.error(f"Error fetching input status: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/v1/metrics/mdi/<int:input_id>', methods=['GET'])
+def get_mdi_metrics(input_id):
+    """Get Media Delivery Index (MDI) - RFC 4445 metrics for an input"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        minutes = request.args.get('minutes', 5, type=int)
+
+        # Query MDI metrics
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "mdi_metrics")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        mdi_data = {
+            'input_id': input_id,
+            'df': None,
+            'mlr': None,
+            'jitter_ms': None,
+            'max_jitter_ms': None,
+            'buffer_utilization': None,
+            'buffer_depth': None,
+            'buffer_max': None,
+            'packets_lost': None,
+            'packets_out_of_order': None,
+            'input_rate_mbps': None
+        }
+
+        tables = influx_query_api.query(query, org=INFLUXDB_ORG)
+        for table in tables:
+            for record in table.records:
+                field = record.get_field()
+                value = record.get_value()
+                if field in mdi_data:
+                    mdi_data[field] = value
+                if 'timestamp' not in mdi_data:
+                    mdi_data['timestamp'] = record.get_time().isoformat()
+
+        return jsonify({
+            'status': 'ok',
+            'data': mdi_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching MDI metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/qoe/<int:input_id>', methods=['GET'])
+def get_qoe_metrics(input_id):
+    """Get Quality of Experience (QoE) metrics for an input"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        minutes = request.args.get('minutes', 5, type=int)
+
+        # Query QoE metrics
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "qoe_metrics")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        qoe_data = {
+            'input_id': input_id,
+            'overall_mos': None,
+            'video_quality_score': None,
+            'audio_quality_score': None,
+            'video_pid_active': None,
+            'audio_pid_active': None,
+            'video_bitrate_mbps': None,
+            'audio_bitrate_kbps': None,
+            'black_frames_detected': None,
+            'freeze_frames_detected': None,
+            'audio_silence_detected': None,
+            'audio_loudness_lufs': None
+        }
+
+        tables = influx_query_api.query(query, org=INFLUXDB_ORG)
+        for table in tables:
+            for record in table.records:
+                field = record.get_field()
+                value = record.get_value()
+                if field in qoe_data:
+                    qoe_data[field] = value
+                if 'timestamp' not in qoe_data:
+                    qoe_data['timestamp'] = record.get_time().isoformat()
+
+        return jsonify({
+            'status': 'ok',
+            'data': qoe_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching QoE metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/comprehensive/<int:input_id>', methods=['GET'])
+def get_comprehensive_metrics(input_id):
+    """Get all metrics (TR101290, MDI, QoE) for an input in one call"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        # Get input info
+        input_obj = db.session.query(Input).filter_by(input_id=input_id).first()
+        if not input_obj:
+            return jsonify({'error': 'Input not found'}), 404
+
+        comprehensive = {
+            'input_id': input_id,
+            'input_name': input_obj.input_name,
+            'input_url': input_obj.input_url,
+            'tr101290': {},
+            'mdi': {},
+            'qoe': {},
+            'stream': {}
+        }
+
+        # Get TR 101 290
+        tr_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r["_measurement"] =~ /^tr101290_/)
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        for table in influx_query_api.query(tr_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                measurement = record.values['_measurement']
+                field = record.get_field()
+                value = record.get_value()
+
+                if measurement not in comprehensive['tr101290']:
+                    comprehensive['tr101290'][measurement] = {}
+                comprehensive['tr101290'][measurement][field] = value
+
+        # Get MDI
+        mdi_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r["_measurement"] == "mdi_metrics")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        for table in influx_query_api.query(mdi_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                comprehensive['mdi'][record.get_field()] = record.get_value()
+
+        # Get QoE
+        qoe_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r["_measurement"] == "qoe_metrics")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        for table in influx_query_api.query(qoe_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                comprehensive['qoe'][record.get_field()] = record.get_value()
+
+        # Get stream metrics
+        stream_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r["_measurement"] == "udp_probe_metric")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> filter(fn: (r) => r["_field"] == "bitrate_mbps")
+        |> last()
+        '''
+
+        for table in influx_query_api.query(stream_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                comprehensive['stream']['bitrate_mbps'] = record.get_value()
+                comprehensive['stream']['last_update'] = record.get_time().isoformat()
+
+        return jsonify({
+            'status': 'ok',
+            'data': comprehensive
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # ============================================================================
 # HEALTH CHECK
 # ============================================================================
