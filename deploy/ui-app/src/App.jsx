@@ -612,6 +612,235 @@ const CustomBitrateTooltip = ({ active, payload }) => {
 };
 
 // ============================================================================
+// CODEC PANEL
+// ============================================================================
+
+const CodecPanel = ({ codecInfo }) => {
+  if (!codecInfo) return null;
+
+  return (
+    <div className="codec-panel">
+      <h3>Stream Codec Information</h3>
+
+      <div className="codec-grid">
+        {/* Video Codec */}
+        <div className="codec-section">
+          <h4>Video Codec</h4>
+          <div className="codec-info">
+            <div className="codec-item">
+              <span className="label">Codec:</span>
+              <span className="value codec-badge">{codecInfo.video_codec?.toUpperCase() || 'UNKNOWN'}</span>
+            </div>
+            <div className="codec-item">
+              <span className="label">Profile:</span>
+              <span className="value">{codecInfo.video_profile || 'Unknown'}</span>
+            </div>
+            <div className="codec-item">
+              <span className="label">Level:</span>
+              <span className="value">{codecInfo.video_level || 'Unknown'}</span>
+            </div>
+            <div className="codec-item">
+              <span className="label">Resolution:</span>
+              <span className="value">{codecInfo.video_resolution || 'Unknown'}</span>
+            </div>
+            <div className="codec-item">
+              <span className="label">Frame Rate:</span>
+              <span className="value">{codecInfo.video_fps || 'Unknown'} fps</span>
+            </div>
+            <div className="codec-item">
+              <span className="label">Bitrate:</span>
+              <span className="value">{codecInfo.video_bitrate_kbps?.toFixed(0) || 0} kbps</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Audio Codec */}
+        <div className="codec-section">
+          <h4>Audio Codec</h4>
+          <div className="codec-info">
+            <div className="codec-item">
+              <span className="label">Codec:</span>
+              <span className="value codec-badge">{codecInfo.audio_codec?.toUpperCase() || 'UNKNOWN'}</span>
+            </div>
+            <div className="codec-item">
+              <span className="label">Channels:</span>
+              <span className="value">{codecInfo.audio_channels || 'Unknown'}</span>
+            </div>
+            <div className="codec-item">
+              <span className="label">Sample Rate:</span>
+              <span className="value">{codecInfo.audio_sample_rate || 'Unknown'}</span>
+            </div>
+            <div className="codec-item">
+              <span className="label">Bitrate:</span>
+              <span className="value">{codecInfo.audio_bitrate_kbps?.toFixed(0) || 0} kbps</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// VIDEO MOS PANEL
+// ============================================================================
+
+const VideoMOSPanel = ({ qoeMetrics, tr101290Metrics, mdiMetrics }) => {
+  if (!qoeMetrics || !tr101290Metrics) return null;
+
+  const getMOSColor = (mos) => {
+    if (mos >= 4.5) return 'excellent';
+    if (mos >= 4.0) return 'good';
+    if (mos >= 3.5) return 'fair';
+    if (mos >= 2.5) return 'poor';
+    return 'bad';
+  };
+
+  const getMOSLabel = (mos) => {
+    if (mos >= 4.5) return 'Excellent';
+    if (mos >= 4.0) return 'Good';
+    if (mos >= 3.5) return 'Fair';
+    if (mos >= 2.5) return 'Poor';
+    return 'Bad';
+  };
+
+  const mosColor = getMOSColor(qoeMetrics.overall_mos || 0);
+
+  return (
+    <div className="mos-panel">
+      <h3>Video MOS (Mean Opinion Score)</h3>
+
+      <div className="mos-display">
+        <div className={`mos-score mos-${mosColor}`}>
+          <div className="mos-value">{qoeMetrics.overall_mos?.toFixed(2) || 'N/A'}</div>
+          <div className="mos-label">{getMOSLabel(qoeMetrics.overall_mos || 0)}</div>
+        </div>
+
+        <div className="mos-factors">
+          <h4>Quality Factors</h4>
+
+          <div className="factor-item">
+            <span className="factor-label">TR 101 290 P1 Errors:</span>
+            <span className={`factor-value ${tr101290Metrics.priority_1?.total_p1_errors > 0 ? 'error' : 'success'}`}>
+              {tr101290Metrics.priority_1?.total_p1_errors || 0}
+            </span>
+          </div>
+
+          <div className="factor-item">
+            <span className="factor-label">TR 101 290 P2 Errors:</span>
+            <span className={`factor-value ${tr101290Metrics.priority_2?.total_p2_errors > 0 ? 'warning' : 'success'}`}>
+              {tr101290Metrics.priority_2?.total_p2_errors || 0}
+            </span>
+          </div>
+
+          {mdiMetrics && (
+            <>
+              <div className="factor-item">
+                <span className="factor-label">Packet Loss:</span>
+                <span className={`factor-value ${mdiMetrics.packets_lost > 0 ? 'error' : 'success'}`}>
+                  {mdiMetrics.packets_lost || 0} packets
+                </span>
+              </div>
+
+              <div className="factor-item">
+                <span className="factor-label">Jitter:</span>
+                <span className={`factor-value ${mdiMetrics.jitter_ms > 10 ? 'warning' : 'success'}`}>
+                  {mdiMetrics.jitter_ms?.toFixed(2) || '0.00'} ms
+                </span>
+              </div>
+            </>
+          )}
+
+          <div className="factor-item">
+            <span className="factor-label">Video Stream:</span>
+            <span className={`factor-value ${qoeMetrics.video_pid_active ? 'success' : 'error'}`}>
+              {qoeMetrics.video_pid_active ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+
+          <div className="factor-item">
+            <span className="factor-label">Audio Stream:</span>
+            <span className={`factor-value ${qoeMetrics.audio_pid_active ? 'success' : 'error'}`}>
+              {qoeMetrics.audio_pid_active ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// AUDIO LUFS PANEL
+// ============================================================================
+
+const AudioLUFSPanel = ({ qoeMetrics }) => {
+  if (!qoeMetrics) return null;
+
+  const getLUFSCompliance = (lufs) => {
+    if (lufs === null || lufs === undefined) return 'non-compliant';
+    // EBU R128 target: -23 LUFS ± 1 LU
+    if (Math.abs(lufs + 23) <= 1.0) return 'compliant';
+    if (Math.abs(lufs + 23) <= 2.0) return 'acceptable';
+    return 'non-compliant';
+  };
+
+  const lufs = qoeMetrics.audio_loudness_lufs;
+  const compliance = getLUFSCompliance(lufs);
+
+  return (
+    <div className="lufs-panel">
+      <h3>Audio Loudness (LUFS)</h3>
+      <p className="lufs-desc">EBU R128 Compliance Measurement</p>
+
+      <div className="lufs-display">
+        <div className={`lufs-meter lufs-${compliance}`}>
+          <div className="lufs-value">
+            {lufs != null ? lufs.toFixed(1) : 'N/A'}
+            <span className="lufs-unit">LUFS</span>
+          </div>
+          <div className="lufs-label">
+            Integrated Loudness
+          </div>
+        </div>
+
+        <div className="lufs-details">
+          <div className="lufs-metric">
+            <span className="metric-label">Integrated (I):</span>
+            <span className="metric-value">
+              {qoeMetrics.audio_loudness_i != null ? `${qoeMetrics.audio_loudness_i.toFixed(1)} LUFS` : 'N/A'}
+            </span>
+          </div>
+
+          <div className="lufs-metric">
+            <span className="metric-label">Loudness Range (LRA):</span>
+            <span className="metric-value">
+              {qoeMetrics.audio_loudness_lra != null ? `${qoeMetrics.audio_loudness_lra.toFixed(1)} LU` : 'N/A'}
+            </span>
+          </div>
+
+          <div className="lufs-metric">
+            <span className="metric-label">EBU R128 Target:</span>
+            <span className="metric-value">-23.0 LUFS ± 1 LU</span>
+          </div>
+
+          <div className={`compliance-status status-${compliance}`}>
+            <span className="status-icon">
+              {compliance === 'compliant' ? '✓' : compliance === 'acceptable' ? '⚠' : '✗'}
+            </span>
+            <span className="status-text">
+              {compliance === 'compliant' ? 'EBU R128 Compliant' :
+               compliance === 'acceptable' ? 'Acceptable Range' :
+               'Non-Compliant'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
 // METRICS TAB
 // ============================================================================
 
@@ -622,6 +851,7 @@ const MetricsTab = () => {
   const [tr101290Metrics, setTR101290Metrics] = useState(null);
   const [mdiMetrics, setMDIMetrics] = useState(null);
   const [qoeMetrics, setQoEMetrics] = useState(null);
+  const [codecInfo, setCodecInfo] = useState(null);
   const [inputStatus, setInputStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -701,12 +931,13 @@ const MetricsTab = () => {
     const fetchMetrics = async () => {
       setLoading(true);
       try {
-        const [streamRes, tr101290Res, statusRes, mdiRes, qoeRes] = await Promise.all([
+        const [streamRes, tr101290Res, statusRes, mdiRes, qoeRes, codecRes] = await Promise.all([
           fetch(`${API_BASE}/metrics/stream/${selectedInput}?minutes=60`),
           fetch(`${API_BASE}/metrics/tr101290/${selectedInput}`),
           fetch(`${API_BASE}/metrics/status/${selectedInput}`),
           fetch(`${API_BASE}/metrics/mdi/${selectedInput}`),
-          fetch(`${API_BASE}/metrics/qoe/${selectedInput}`)
+          fetch(`${API_BASE}/metrics/qoe/${selectedInput}`),
+          fetch(`${API_BASE}/metrics/codec/${selectedInput}`)
         ]);
 
         if (streamRes.ok) {
@@ -742,6 +973,11 @@ const MetricsTab = () => {
         if (qoeRes.ok) {
           const qoeData = await qoeRes.json();
           setQoEMetrics(qoeData.data);
+        }
+
+        if (codecRes.ok) {
+          const codecData = await codecRes.json();
+          setCodecInfo(codecData.data);
         }
       } catch (error) {
         console.error('Error fetching metrics:', error);
@@ -929,33 +1165,24 @@ const MetricsTab = () => {
             </div>
           )}
 
-          {/* Video MOS Placeholder */}
-          <div className="metric-chart placeholder">
-            <h3>Video MOS (Mean Opinion Score)</h3>
-            <div className="coming-soon">
-              <p>Coming soon: Video quality analysis based on bitrate, packet loss, and TR 101 290 errors</p>
-              <div className="mos-estimate">
-                {tr101290Metrics && (
-                  <div className="mos-card">
-                    <div className="mos-value">
-                      {calculateEstimatedMOS(tr101290Metrics)}
-                    </div>
-                    <div className="mos-label">Estimated MOS</div>
-                    <div className="mos-desc">Based on TR 101 290 P1 errors</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          {/* Codec Information */}
+          {codecInfo && (
+            <CodecPanel codecInfo={codecInfo} />
+          )}
 
-          {/* Audio Loudness Placeholder */}
-          <div className="metric-chart placeholder">
-            <h3>Audio Loudness (LUFS)</h3>
-            <div className="coming-soon">
-              <p>Coming soon: Audio loudness measurement requires ffprobe audio stream analysis</p>
-              <p className="info-text">Will display LUFS (Loudness Units Full Scale) measurements for EBU R128 compliance</p>
-            </div>
-          </div>
+          {/* Video MOS */}
+          {qoeMetrics && tr101290Metrics && (
+            <VideoMOSPanel
+              qoeMetrics={qoeMetrics}
+              tr101290Metrics={tr101290Metrics}
+              mdiMetrics={mdiMetrics}
+            />
+          )}
+
+          {/* Audio LUFS */}
+          {qoeMetrics && (
+            <AudioLUFSPanel qoeMetrics={qoeMetrics} />
+          )}
         </>
       )}
     </div>

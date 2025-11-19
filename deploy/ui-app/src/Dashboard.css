@@ -1556,3 +1556,316 @@ table {
     font-size: 11px;
   }
 }
+
+/* ============================================================================
+   Codec, MOS, and LUFS Panel Styles
+   ============================================================================ */
+
+/* Codec Panel */
+.codec-panel {
+  background: linear-gradient(135deg, #1e2530 0%, #252d3a 100%);
+  border: 1px solid rgba(0, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.codec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 20px;
+  margin-top: 15px;
+}
+
+.codec-section h4 {
+  color: #00E5FF;
+  font-size: 16px;
+  margin-bottom: 12px;
+  border-bottom: 2px solid rgba(0, 229, 255, 0.3);
+  padding-bottom: 8px;
+}
+
+.codec-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.codec-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+}
+
+.codec-item .label {
+  color: #8B95A5;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.codec-item .value {
+  color: #E2E8F0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.codec-badge {
+  background: linear-gradient(135deg, #00E5FF 0%, #00B8D4 100%);
+  color: #0a0e17;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* MOS Panel */
+.mos-panel {
+  background: linear-gradient(135deg, #1e2530 0%, #252d3a 100%);
+  border: 1px solid rgba(0, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.mos-display {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 30px;
+  margin-top: 15px;
+}
+
+.mos-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+  border-radius: 12px;
+  border: 3px solid;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.mos-score.mos-excellent {
+  background: rgba(72, 187, 120, 0.15);
+  border-color: #48BB78;
+  box-shadow: 0 0 20px rgba(72, 187, 120, 0.3);
+}
+
+.mos-score.mos-good {
+  background: rgba(0, 217, 163, 0.15);
+  border-color: #00D9A3;
+  box-shadow: 0 0 20px rgba(0, 217, 163, 0.3);
+}
+
+.mos-score.mos-fair {
+  background: rgba(255, 184, 0, 0.15);
+  border-color: #FFB800;
+  box-shadow: 0 0 20px rgba(255, 184, 0, 0.3);
+}
+
+.mos-score.mos-poor {
+  background: rgba(255, 140, 0, 0.15);
+  border-color: #FF8C00;
+  box-shadow: 0 0 20px rgba(255, 140, 0, 0.3);
+}
+
+.mos-score.mos-bad {
+  background: rgba(255, 59, 59, 0.15);
+  border-color: #FF3B3B;
+  box-shadow: 0 0 20px rgba(255, 59, 59, 0.3);
+}
+
+.mos-value {
+  font-size: 48px;
+  font-weight: 700;
+  color: #00FFFF;
+  text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.mos-label {
+  font-size: 16px;
+  color: #B0BAC9;
+  margin-top: 8px;
+  font-weight: 600;
+}
+
+.mos-factors {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.mos-factors h4 {
+  color: #00E5FF;
+  font-size: 15px;
+  margin-bottom: 15px;
+}
+
+.factor-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.factor-label {
+  color: #8B95A5;
+  font-size: 13px;
+}
+
+.factor-value {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.factor-value.success {
+  color: #48BB78;
+}
+
+.factor-value.warning {
+  color: #FFB800;
+}
+
+.factor-value.error {
+  color: #FF3B3B;
+}
+
+/* LUFS Panel */
+.lufs-panel {
+  background: linear-gradient(135deg, #1e2530 0%, #252d3a 100%);
+  border: 1px solid rgba(0, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.lufs-desc {
+  color: #8B95A5;
+  font-size: 13px;
+  margin: 5px 0 15px 0;
+}
+
+.lufs-display {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 30px;
+  margin-top: 15px;
+}
+
+.lufs-meter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+  border-radius: 12px;
+  border: 3px solid;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.lufs-meter.lufs-compliant {
+  background: rgba(72, 187, 120, 0.15);
+  border-color: #48BB78;
+  box-shadow: 0 0 20px rgba(72, 187, 120, 0.3);
+}
+
+.lufs-meter.lufs-acceptable {
+  background: rgba(255, 184, 0, 0.15);
+  border-color: #FFB800;
+  box-shadow: 0 0 20px rgba(255, 184, 0, 0.3);
+}
+
+.lufs-meter.lufs-non-compliant {
+  background: rgba(255, 59, 59, 0.15);
+  border-color: #FF3B3B;
+  box-shadow: 0 0 20px rgba(255, 59, 59, 0.3);
+}
+
+.lufs-value {
+  font-size: 42px;
+  font-weight: 700;
+  color: #00FFFF;
+  text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.lufs-unit {
+  font-size: 18px;
+  margin-left: 8px;
+  color: #B0BAC9;
+  font-weight: 500;
+}
+
+.lufs-label {
+  font-size: 14px;
+  color: #B0BAC9;
+  margin-top: 8px;
+  font-weight: 500;
+}
+
+.lufs-details {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.lufs-metric {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.metric-label {
+  color: #8B95A5;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.metric-value {
+  color: #E2E8F0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.compliance-status {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.compliance-status.status-compliant {
+  background: rgba(72, 187, 120, 0.2);
+  color: #48BB78;
+}
+
+.compliance-status.status-acceptable {
+  background: rgba(255, 184, 0, 0.2);
+  color: #FFB800;
+}
+
+.compliance-status.status-non-compliant {
+  background: rgba(255, 59, 59, 0.2);
+  color: #FF3B3B;
+}
+
+.status-icon {
+  font-size: 18px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .codec-grid, .mos-display, .lufs-display {
+    grid-template-columns: 1fr;
+  }
+}

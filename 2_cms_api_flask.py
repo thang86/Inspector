@@ -1150,7 +1150,9 @@ def get_qoe_metrics(input_id):
             'black_frames_detected': None,
             'freeze_frames_detected': None,
             'audio_silence_detected': None,
-            'audio_loudness_lufs': None
+            'audio_loudness_lufs': None,
+            'audio_loudness_i': None,
+            'audio_loudness_lra': None
         }
 
         tables = influx_query_api.query(query, org=INFLUXDB_ORG)
@@ -1170,6 +1172,66 @@ def get_qoe_metrics(input_id):
 
     except Exception as e:
         logger.error(f"Error fetching QoE metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/codec/<int:input_id>', methods=['GET'])
+def get_codec_info(input_id):
+    """Get codec information for an input"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        minutes = request.args.get('minutes', 5, type=int)
+
+        # Query codec info
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "codec_info")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        codec_data = {
+            'input_id': input_id,
+            'video_codec': 'Unknown',
+            'video_profile': 'Unknown',
+            'video_level': 'Unknown',
+            'video_resolution': 'Unknown',
+            'video_fps': 'Unknown',
+            'video_bitrate_kbps': 0,
+            'audio_codec': 'Unknown',
+            'audio_channels': 'Unknown',
+            'audio_sample_rate': 'Unknown',
+            'audio_bitrate_kbps': 0
+        }
+
+        tables = influx_query_api.query(query, org=INFLUXDB_ORG)
+        for table in tables:
+            for record in table.records:
+                field = record.get_field()
+                value = record.get_value()
+
+                # Get field values
+                if field in codec_data:
+                    codec_data[field] = value
+
+                # Get tag values
+                if not codec_data.get('timestamp'):
+                    codec_data['timestamp'] = record.get_time().isoformat()
+                    # Tags are in record values
+                    if 'video_codec' in record.values:
+                        codec_data['video_codec'] = record.values.get('video_codec', 'Unknown')
+                    if 'audio_codec' in record.values:
+                        codec_data['audio_codec'] = record.values.get('audio_codec', 'Unknown')
+
+        return jsonify({
+            'status': 'ok',
+            'data': codec_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching codec info: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/v1/metrics/comprehensive/<int:input_id>', methods=['GET'])
