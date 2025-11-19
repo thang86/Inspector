@@ -7,10 +7,12 @@ REST API for channel configuration, templates, alert management
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 from datetime import datetime, timedelta
 import logging
 import os
 import glob
+from influxdb_client import InfluxDBClient
 
 # ============================================================================
 # CONFIGURATION
@@ -31,6 +33,21 @@ db = SQLAlchemy(app)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# InfluxDB Configuration
+INFLUXDB_URL = os.getenv('INFLUXDB_URL', 'http://influxdb:8086')
+INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN', 'your_token')
+INFLUXDB_ORG = os.getenv('INFLUXDB_ORG', 'fpt-play')
+INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET', 'packager_metrics')
+
+# Initialize InfluxDB client
+try:
+    influx_client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
+    influx_query_api = influx_client.query_api()
+    logger.info(f"Connected to InfluxDB at {INFLUXDB_URL}")
+except Exception as e:
+    logger.error(f"Failed to connect to InfluxDB: {e}")
+    influx_query_api = None
 
 # ============================================================================
 # DATABASE MODELS
@@ -574,6 +591,8 @@ def get_inputs():
     """Get all inputs with optional filters and channel names"""
     probe_id = request.args.get('probe_id', type=int)
     channel_id = request.args.get('channel_id', type=int)
+    # Default to showing only enabled inputs unless explicitly requesting all
+    show_all = request.args.get('all', type=lambda x: x.lower() == 'true', default=False)
     enabled = request.args.get('enabled', type=lambda x: x.lower() == 'true', default=None)
 
     query = Input.query
@@ -584,7 +603,10 @@ def get_inputs():
     if channel_id:
         query = query.filter_by(channel_id=channel_id)
 
-    if enabled is not None:
+    # If not showing all and enabled not explicitly set, default to enabled only
+    if not show_all and enabled is None:
+        query = query.filter_by(enabled=True)
+    elif enabled is not None:
         query = query.filter_by(enabled=enabled)
 
     inputs = query.all()
@@ -639,17 +661,36 @@ def create_input():
             return jsonify({'status': 'error', 'message': f'Missing field: {field}'}), 400
 
     try:
+        # Convert empty strings to None for numeric fields
+        channel_id = data.get('channel_id')
+        if channel_id == '' or channel_id is None:
+            channel_id = None
+        else:
+            channel_id = int(channel_id)
+
+        bitrate_mbps = data.get('bitrate_mbps')
+        if bitrate_mbps == '' or bitrate_mbps is None:
+            bitrate_mbps = None
+        else:
+            bitrate_mbps = float(bitrate_mbps)
+
+        input_port = data.get('input_port')
+        if input_port == '' or input_port is None:
+            input_port = None
+        else:
+            input_port = int(input_port)
+
         inp = Input(
             input_name=data['input_name'],
             input_url=data['input_url'],
             input_type=data['input_type'],
             input_protocol=data.get('input_protocol'),
-            input_port=data.get('input_port'),
-            channel_id=data.get('channel_id'),
+            input_port=input_port,
+            channel_id=channel_id,
             probe_id=data['probe_id'],
             is_primary=data.get('is_primary', True),
             enabled=data.get('enabled', True),
-            bitrate_mbps=data.get('bitrate_mbps'),
+            bitrate_mbps=bitrate_mbps,
             input_metadata=data.get('input_metadata')
         )
 
@@ -681,10 +722,33 @@ def update_input(input_id):
     data = request.get_json()
 
     try:
-        for key in ['input_name', 'input_url', 'input_type', 'input_protocol', 'input_port',
-                    'channel_id', 'probe_id', 'is_primary', 'enabled', 'bitrate_mbps', 'input_metadata']:
+        # Update fields with empty string handling for numeric fields
+        for key in ['input_name', 'input_url', 'input_type', 'input_protocol', 'input_metadata']:
             if key in data:
                 setattr(inp, key, data[key])
+
+        # Handle numeric fields - convert empty strings to None
+        if 'channel_id' in data:
+            val = data['channel_id']
+            inp.channel_id = None if val == '' or val is None else int(val)
+
+        if 'probe_id' in data:
+            val = data['probe_id']
+            inp.probe_id = None if val == '' or val is None else int(val)
+
+        if 'input_port' in data:
+            val = data['input_port']
+            inp.input_port = None if val == '' or val is None else int(val)
+
+        if 'bitrate_mbps' in data:
+            val = data['bitrate_mbps']
+            inp.bitrate_mbps = None if val == '' or val is None else float(val)
+
+        # Handle boolean fields
+        if 'is_primary' in data:
+            inp.is_primary = data['is_primary']
+        if 'enabled' in data:
+            inp.enabled = data['enabled']
 
         inp.updated_at = datetime.utcnow()
         db.session.commit()
@@ -792,7 +856,8 @@ def debug_system():
     """Debug endpoint for system information"""
     try:
         # Test database connection
-        db.session.execute('SELECT 1')
+        from sqlalchemy import text
+        db.session.execute(text('SELECT 1'))
 
         # Count records
         channel_count = Channel.query.count()
@@ -821,6 +886,384 @@ def debug_system():
         }), 500
 
 # ============================================================================
+# METRICS ENDPOINTS
+# ============================================================================
+
+@app.route('/api/v1/metrics/stream/<int:input_id>', methods=['GET'])
+def get_stream_metrics(input_id):
+    """Get real-time stream metrics for an input"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        # Get time range from query params (default: last 5 minutes)
+        minutes = request.args.get('minutes', 5, type=int)
+
+        # Query for basic stream metrics
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "udp_probe_metric")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> filter(fn: (r) => r["_field"] == "bitrate_mbps" or r["_field"] == "packets_received" or r["_field"] == "bytes_received")
+        '''
+
+        tables = influx_query_api.query(query, org=INFLUXDB_ORG)
+
+        metrics = []
+        for table in tables:
+            for record in table.records:
+                metrics.append({
+                    'time': record.get_time().isoformat(),
+                    'field': record.get_field(),
+                    'value': record.get_value(),
+                    'input_name': record.values.get('input_name', '')
+                })
+
+        return jsonify({
+            'status': 'ok',
+            'input_id': input_id,
+            'metrics': metrics,
+            'count': len(metrics)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching stream metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/tr101290/<int:input_id>', methods=['GET'])
+def get_tr101290_metrics(input_id):
+    """Get TR 101 290 error metrics for an input"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        minutes = request.args.get('minutes', 5, type=int)
+
+        # Query P1, P2, P3 errors
+        p1_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "tr101290_p1")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        p2_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "tr101290_p2")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        p3_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "tr101290_p3")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        meta_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "tr101290_metadata")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        p1_data = {}
+        p2_data = {}
+        p3_data = {}
+        metadata = {}
+
+        for table in influx_query_api.query(p1_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                p1_data[record.get_field()] = record.get_value()
+
+        for table in influx_query_api.query(p2_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                p2_data[record.get_field()] = record.get_value()
+
+        for table in influx_query_api.query(p3_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                p3_data[record.get_field()] = record.get_value()
+
+        for table in influx_query_api.query(meta_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                metadata[record.get_field()] = record.get_value()
+
+        return jsonify({
+            'status': 'ok',
+            'input_id': input_id,
+            'priority_1': p1_data,
+            'priority_2': p2_data,
+            'priority_3': p3_data,
+            'metadata': metadata
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching TR 101 290 metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/status/<int:input_id>', methods=['GET'])
+def get_input_status(input_id):
+    """Get comprehensive status for an input"""
+    try:
+        # Get input info from database
+        input_obj = db.session.query(Input).filter_by(input_id=input_id).first()
+        if not input_obj:
+            return jsonify({'error': 'Input not found'}), 404
+
+        status = {
+            'input_id': input_id,
+            'input_name': input_obj.input_name,
+            'input_url': input_obj.input_url,
+            'input_type': input_obj.input_type,
+            'enabled': input_obj.enabled,
+            'last_snapshot': input_obj.last_snapshot_at.isoformat() if input_obj.last_snapshot_at else None
+        }
+
+        # Get latest metrics from InfluxDB if available
+        if influx_query_api:
+            try:
+                # Get latest bitrate
+                query = f'''
+                from(bucket: "{INFLUXDB_BUCKET}")
+                |> range(start: -5m)
+                |> filter(fn: (r) => r["_measurement"] == "udp_probe_metric")
+                |> filter(fn: (r) => r["input_id"] == "{input_id}")
+                |> filter(fn: (r) => r["_field"] == "bitrate_mbps")
+                |> last()
+                '''
+
+                for table in influx_query_api.query(query, org=INFLUXDB_ORG):
+                    for record in table.records:
+                        status['bitrate_mbps'] = record.get_value()
+                        status['last_update'] = record.get_time().isoformat()
+
+                # Get TR 101 290 status
+                tr_query = f'''
+                from(bucket: "{INFLUXDB_BUCKET}")
+                |> range(start: -5m)
+                |> filter(fn: (r) => r["_measurement"] == "tr101290_p1")
+                |> filter(fn: (r) => r["input_id"] == "{input_id}")
+                |> filter(fn: (r) => r["_field"] == "total_p1_errors")
+                |> last()
+                '''
+
+                for table in influx_query_api.query(tr_query, org=INFLUXDB_ORG):
+                    for record in table.records:
+                        status['tr101290_p1_errors'] = record.get_value()
+
+            except Exception as e:
+                logger.warning(f"Could not fetch InfluxDB metrics: {e}")
+
+        return jsonify({
+            'status': 'ok',
+            'data': status
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching input status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/mdi/<int:input_id>', methods=['GET'])
+def get_mdi_metrics(input_id):
+    """Get Media Delivery Index (MDI) - RFC 4445 metrics for an input"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        minutes = request.args.get('minutes', 5, type=int)
+
+        # Query MDI metrics
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "mdi_metrics")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        mdi_data = {
+            'input_id': input_id,
+            'df': None,
+            'mlr': None,
+            'jitter_ms': None,
+            'max_jitter_ms': None,
+            'buffer_utilization': None,
+            'buffer_depth': None,
+            'buffer_max': None,
+            'packets_lost': None,
+            'packets_out_of_order': None,
+            'input_rate_mbps': None
+        }
+
+        tables = influx_query_api.query(query, org=INFLUXDB_ORG)
+        for table in tables:
+            for record in table.records:
+                field = record.get_field()
+                value = record.get_value()
+                if field in mdi_data:
+                    mdi_data[field] = value
+                if 'timestamp' not in mdi_data:
+                    mdi_data['timestamp'] = record.get_time().isoformat()
+
+        return jsonify({
+            'status': 'ok',
+            'data': mdi_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching MDI metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/qoe/<int:input_id>', methods=['GET'])
+def get_qoe_metrics(input_id):
+    """Get Quality of Experience (QoE) metrics for an input"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        minutes = request.args.get('minutes', 5, type=int)
+
+        # Query QoE metrics
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -{minutes}m)
+        |> filter(fn: (r) => r["_measurement"] == "qoe_metrics")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        qoe_data = {
+            'input_id': input_id,
+            'overall_mos': None,
+            'video_quality_score': None,
+            'audio_quality_score': None,
+            'video_pid_active': None,
+            'audio_pid_active': None,
+            'video_bitrate_mbps': None,
+            'audio_bitrate_kbps': None,
+            'black_frames_detected': None,
+            'freeze_frames_detected': None,
+            'audio_silence_detected': None,
+            'audio_loudness_lufs': None
+        }
+
+        tables = influx_query_api.query(query, org=INFLUXDB_ORG)
+        for table in tables:
+            for record in table.records:
+                field = record.get_field()
+                value = record.get_value()
+                if field in qoe_data:
+                    qoe_data[field] = value
+                if 'timestamp' not in qoe_data:
+                    qoe_data['timestamp'] = record.get_time().isoformat()
+
+        return jsonify({
+            'status': 'ok',
+            'data': qoe_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching QoE metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/v1/metrics/comprehensive/<int:input_id>', methods=['GET'])
+def get_comprehensive_metrics(input_id):
+    """Get all metrics (TR101290, MDI, QoE) for an input in one call"""
+    try:
+        if not influx_query_api:
+            return jsonify({'error': 'InfluxDB not available'}), 503
+
+        # Get input info
+        input_obj = db.session.query(Input).filter_by(input_id=input_id).first()
+        if not input_obj:
+            return jsonify({'error': 'Input not found'}), 404
+
+        comprehensive = {
+            'input_id': input_id,
+            'input_name': input_obj.input_name,
+            'input_url': input_obj.input_url,
+            'tr101290': {},
+            'mdi': {},
+            'qoe': {},
+            'stream': {}
+        }
+
+        # Get TR 101 290
+        tr_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r["_measurement"] =~ /^tr101290_/)
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        for table in influx_query_api.query(tr_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                measurement = record.values['_measurement']
+                field = record.get_field()
+                value = record.get_value()
+
+                if measurement not in comprehensive['tr101290']:
+                    comprehensive['tr101290'][measurement] = {}
+                comprehensive['tr101290'][measurement][field] = value
+
+        # Get MDI
+        mdi_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r["_measurement"] == "mdi_metrics")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        for table in influx_query_api.query(mdi_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                comprehensive['mdi'][record.get_field()] = record.get_value()
+
+        # Get QoE
+        qoe_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r["_measurement"] == "qoe_metrics")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> last()
+        '''
+
+        for table in influx_query_api.query(qoe_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                comprehensive['qoe'][record.get_field()] = record.get_value()
+
+        # Get stream metrics
+        stream_query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r["_measurement"] == "udp_probe_metric")
+        |> filter(fn: (r) => r["input_id"] == "{input_id}")
+        |> filter(fn: (r) => r["_field"] == "bitrate_mbps")
+        |> last()
+        '''
+
+        for table in influx_query_api.query(stream_query, org=INFLUXDB_ORG):
+            for record in table.records:
+                comprehensive['stream']['bitrate_mbps'] = record.get_value()
+                comprehensive['stream']['last_update'] = record.get_time().isoformat()
+
+        return jsonify({
+            'status': 'ok',
+            'data': comprehensive
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -829,7 +1272,7 @@ def health_check():
     """Health check endpoint"""
     try:
         # Test database connection
-        db.session.execute('SELECT 1')
+        db.session.execute(text('SELECT 1'))
         
         return jsonify({
             'status': 'healthy',
