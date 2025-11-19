@@ -857,7 +857,7 @@ def debug_system():
     try:
         # Test database connection
         from sqlalchemy import text
-        db.session.execute(text('SELECT 1'))
+        result = db.session.execute(text('SELECT 1')).scalar()
 
         # Count records
         channel_count = Channel.query.count()
@@ -1272,14 +1272,14 @@ def health_check():
     """Health check endpoint"""
     try:
         # Test database connection
-        db.session.execute(text('SELECT 1'))
-        
+        result = db.session.execute(text('SELECT 1')).scalar()
+
         return jsonify({
             'status': 'healthy',
             'timestamp': datetime.utcnow().isoformat(),
             'database': 'connected'
         })
-    
+
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return jsonify({
