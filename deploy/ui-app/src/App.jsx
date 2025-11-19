@@ -328,11 +328,11 @@ const TierDistributionChart = ({ channels }) => {
   return (
     <ResponsiveContainer width="100%" height={300}>
       <BarChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" />
+        <CartesianGrid strokeDasharray="3 3" stroke="#334455" />
         <XAxis dataKey="tier" />
         <YAxis />
         <Tooltip />
-        <Bar dataKey="count" fill="#8884d8" />
+        <Bar dataKey="count" fill="#00E5FF" />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -348,11 +348,11 @@ const AlertSeverityChart = ({ alerts }) => {
   return (
     <ResponsiveContainer width="100%" height={300}>
       <BarChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" />
+        <CartesianGrid strokeDasharray="3 3" stroke="#334455" />
         <XAxis dataKey="severity" />
         <YAxis />
         <Tooltip />
-        <Bar dataKey="count" fill="#82ca9d" />
+        <Bar dataKey="count" fill="#00D9A3" />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -734,7 +734,7 @@ const MetricsTab = () => {
               <h3>Stream Bitrate - {selectedInputName}</h3>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={streamMetrics}>
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334455" />
                   <XAxis dataKey="time" />
                   <YAxis label={{ value: 'Mbps', angle: -90, position: 'insideLeft' }} />
                   <Tooltip />
@@ -742,7 +742,7 @@ const MetricsTab = () => {
                   <Line
                     type="monotone"
                     dataKey="bitrate"
-                    stroke="#ffc658"
+                    stroke="#00E5FF"
                     strokeWidth={2}
                     dot={false}
                     name="Bitrate (Mbps)"
