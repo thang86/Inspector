@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import './Dashboard.css';
+import { colors } from './theme/colors';
 
 const API_BASE = 'http://api.monitor.local/api/v1';
 
@@ -327,7 +328,7 @@ const TierDistributionChart = ({ channels }) => {
         <XAxis dataKey="tier" />
         <YAxis />
         <Tooltip />
-        <Bar dataKey="count" fill="#8884d8" />
+        <Bar dataKey="count" fill="#00E5FF" />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -347,7 +348,7 @@ const AlertSeverityChart = ({ alerts }) => {
         <XAxis dataKey="severity" />
         <YAxis />
         <Tooltip />
-        <Bar dataKey="count" fill="#82ca9d" />
+        <Bar dataKey="count" fill="#00D9A3" />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -591,7 +592,7 @@ const MetricsTab = () => {
             <YAxis domain={[2, 5]} />
             <Tooltip />
             <Legend />
-            <Line type="monotone" dataKey="mos" stroke="#8884d8" />
+            <Line type="monotone" dataKey="mos" stroke="#00E5FF" />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -605,7 +606,7 @@ const MetricsTab = () => {
             <YAxis domain={[-24, -22]} />
             <Tooltip />
             <Legend />
-            <Line type="monotone" dataKey="loudness" stroke="#82ca9d" />
+            <Line type="monotone" dataKey="loudness" stroke="#00D9A3" />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -619,7 +620,7 @@ const MetricsTab = () => {
             <YAxis />
             <Tooltip />
             <Legend />
-            <Line type="monotone" dataKey="bitrate" stroke="#ffc658" />
+            <Line type="monotone" dataKey="bitrate" stroke="#00E5FF" />
           </LineChart>
         </ResponsiveContainer>
       </div>
