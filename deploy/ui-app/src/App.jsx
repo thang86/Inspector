@@ -2,7 +2,7 @@
 // Real-time channel monitoring, alert management, configuration UI
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ReferenceLine, ReferenceArea } from 'recharts';
 import './Dashboard.css';
 import { useToast } from './hooks';
 import Toast from './components/Toast';
@@ -565,6 +565,53 @@ const AlertRow = ({ alert, onAcknowledge, onResolve }) => (
 );
 
 // ============================================================================
+// METRICS TAB - Custom Components
+// ============================================================================
+
+// Custom Tooltip for Bitrate Chart
+const CustomBitrateTooltip = ({ active, payload }) => {
+  if (!active || !payload || !payload.length) return null;
+
+  const data = payload[0].payload;
+  const bitrateValue = parseFloat(data.bitrate);
+
+  return (
+    <div
+      style={{
+        background: 'rgba(30, 35, 45, 0.95)',
+        border: '1px solid rgba(0, 255, 255, 0.3)',
+        borderRadius: '8px',
+        padding: '12px 16px',
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
+        backdropFilter: 'blur(8px)'
+      }}
+    >
+      <div style={{ marginBottom: '6px', fontSize: '11px', color: '#8B95A5', fontWeight: 500 }}>
+        {data.timestamp ? new Date(data.timestamp).toLocaleString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true
+        }) : data.time}
+      </div>
+      <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#00FFFF' }}>
+        {bitrateValue.toFixed(3)} Mbps
+      </div>
+      {bitrateValue < 0.8 && (
+        <div style={{ marginTop: '6px', fontSize: '10px', color: '#FF6B6B', fontWeight: 500 }}>
+          ⚠ Below target
+        </div>
+      )}
+      {bitrateValue > 1.2 && (
+        <div style={{ marginTop: '6px', fontSize: '10px', color: '#FFB800', fontWeight: 500 }}>
+          ⚠ Above expected
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
 // METRICS TAB
 // ============================================================================
 
@@ -578,6 +625,11 @@ const MetricsTab = () => {
   const [inputStatus, setInputStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
+
+  // Zoom and pan state for Bitrate chart
+  const [refAreaLeft, setRefAreaLeft] = useState(null);
+  const [refAreaRight, setRefAreaRight] = useState(null);
+  const [zoomDomain, setZoomDomain] = useState(null);
 
   // Fetch available inputs
   useEffect(() => {
@@ -599,6 +651,48 @@ const MetricsTab = () => {
 
     fetchInputs();
   }, [selectedInput]);
+
+  // Handle zoom functionality
+  const handleZoom = useCallback(() => {
+    if (refAreaLeft === refAreaRight || !refAreaRight) {
+      setRefAreaLeft(null);
+      setRefAreaRight(null);
+      return;
+    }
+
+    // Get the indices
+    const data = streamMetrics;
+    const leftIndex = data.findIndex(item => item.time === refAreaLeft);
+    const rightIndex = data.findIndex(item => item.time === refAreaRight);
+
+    if (leftIndex === -1 || rightIndex === -1) {
+      setRefAreaLeft(null);
+      setRefAreaRight(null);
+      return;
+    }
+
+    // Ensure left is before right
+    const [startIdx, endIdx] = leftIndex < rightIndex
+      ? [leftIndex, rightIndex]
+      : [rightIndex, leftIndex];
+
+    // Calculate Y domain (bitrate range)
+    const zoomedData = data.slice(startIdx, endIdx + 1);
+    const bitrateValues = zoomedData.map(d => parseFloat(d.bitrate));
+    const minBitrate = Math.min(...bitrateValues);
+    const maxBitrate = Math.max(...bitrateValues);
+    const padding = (maxBitrate - minBitrate) * 0.1; // 10% padding
+
+    setZoomDomain({
+      x1: data[startIdx].time,
+      x2: data[endIdx].time,
+      y1: (minBitrate - padding).toFixed(3),
+      y2: (maxBitrate + padding).toFixed(3)
+    });
+
+    setRefAreaLeft(null);
+    setRefAreaRight(null);
+  }, [refAreaLeft, refAreaRight, streamMetrics]);
 
   // Fetch metrics for selected input
   useEffect(() => {
@@ -728,25 +822,108 @@ const MetricsTab = () => {
             <QoEPanel metrics={qoeMetrics} inputName={selectedInputName} />
           )}
 
-          {/* Stream Bitrate Chart */}
+          {/* Stream Bitrate Chart - Enhanced */}
           {streamMetrics.length > 0 && (
-            <div className="metric-chart">
-              <h3>Stream Bitrate - {selectedInputName}</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={streamMetrics}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#334455" />
-                  <XAxis dataKey="time" />
-                  <YAxis label={{ value: 'Mbps', angle: -90, position: 'insideLeft' }} />
-                  <Tooltip />
-                  <Legend />
+            <div className="metric-chart bitrate-chart-enhanced">
+              <div className="chart-header">
+                <h3>Stream Bitrate - {selectedInputName}</h3>
+                {zoomDomain && (
+                  <button className="reset-zoom-btn" onClick={() => setZoomDomain(null)}>
+                    Reset Zoom
+                  </button>
+                )}
+              </div>
+              <ResponsiveContainer width="100%" height={350}>
+                <LineChart
+                  data={streamMetrics}
+                  onMouseDown={(e) => e && setRefAreaLeft(e.activeLabel)}
+                  onMouseMove={(e) => e && refAreaLeft && setRefAreaRight(e.activeLabel)}
+                  onMouseUp={handleZoom}
+                >
+                  <defs>
+                    {/* Gradient Fill for Area */}
+                    <linearGradient id="bitrateGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#00FFFF" stopOpacity={0.4} />
+                      <stop offset="50%" stopColor="#00FFFF" stopOpacity={0.2} />
+                      <stop offset="100%" stopColor="#000000" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+
+                  {/* Grid with Cool Grey */}
+                  <CartesianGrid strokeDasharray="3 3" stroke="#3E4A5C" />
+
+                  {/* X-Axis - Time with optimized labels */}
+                  <XAxis
+                    dataKey="time"
+                    stroke="#8B95A5"
+                    tick={{ fill: '#B0BAC9', fontSize: 11 }}
+                    interval="preserveStartEnd"
+                    minTickGap={50}
+                    domain={zoomDomain ? [zoomDomain.x1, zoomDomain.x2] : ['auto', 'auto']}
+                    allowDataOverflow
+                  />
+
+                  {/* Y-Axis - Bitrate with unit */}
+                  <YAxis
+                    stroke="#8B95A5"
+                    tick={{ fill: '#B0BAC9', fontSize: 12 }}
+                    label={{
+                      value: 'Bitrate (Mbps)',
+                      angle: -90,
+                      position: 'insideLeft',
+                      style: { fill: '#B0BAC9', fontSize: 13, fontWeight: 500 }
+                    }}
+                    domain={zoomDomain ? [zoomDomain.y1, zoomDomain.y2] : ['auto', 'auto']}
+                    allowDataOverflow
+                  />
+
+                  {/* Custom Enhanced Tooltip */}
+                  <Tooltip content={<CustomBitrateTooltip />} />
+
+                  {/* Reference Line for Target Bitrate (1.0 Mbps) */}
+                  <ReferenceLine
+                    y={1.0}
+                    stroke="#6B7785"
+                    strokeDasharray="5 5"
+                    strokeWidth={1.5}
+                    label={{
+                      value: 'Target: 1.0 Mbps',
+                      position: 'insideTopRight',
+                      fill: '#8B95A5',
+                      fontSize: 11
+                    }}
+                  />
+
+                  {/* Area Fill with Gradient */}
+                  <Area
+                    type="monotone"
+                    dataKey="bitrate"
+                    stroke="none"
+                    fill="url(#bitrateGradient)"
+                    fillOpacity={1}
+                  />
+
+                  {/* Main Data Line - Vivid Cyan */}
                   <Line
                     type="monotone"
                     dataKey="bitrate"
-                    stroke="#00E5FF"
-                    strokeWidth={2}
+                    stroke="#00FFFF"
+                    strokeWidth={2.5}
                     dot={false}
-                    name="Bitrate (Mbps)"
+                    name="Bitrate"
+                    animationDuration={300}
                   />
+
+                  {/* Zoom Selection Area */}
+                  {refAreaLeft && refAreaRight && (
+                    <ReferenceArea
+                      x1={refAreaLeft}
+                      x2={refAreaRight}
+                      strokeOpacity={0.3}
+                      fill="#00FFFF"
+                      fillOpacity={0.2}
+                    />
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             </div>

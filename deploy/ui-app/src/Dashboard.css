@@ -1464,3 +1464,95 @@ table {
   font-size: 12px;
   font-weight: 600;
 }
+
+/* ============================================================================
+   Enhanced Bitrate Chart Styles
+   ============================================================================ */
+
+.bitrate-chart-enhanced {
+  position: relative;
+  background: linear-gradient(135deg, #1a1f2e 0%, #232937 100%);
+  border: 1px solid rgba(0, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.bitrate-chart-enhanced .chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.bitrate-chart-enhanced h3 {
+  color: #00FFFF;
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  text-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+}
+
+.reset-zoom-btn {
+  background: linear-gradient(135deg, #00FFFF 0%, #00B8D4 100%);
+  color: #0a0e17;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 255, 255, 0.3);
+}
+
+.reset-zoom-btn:hover {
+  background: linear-gradient(135deg, #00E5FF 0%, #00D9FF 100%);
+  box-shadow: 0 4px 12px rgba(0, 255, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+.reset-zoom-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 255, 255, 0.4);
+}
+
+/* Chart interaction cursor */
+.bitrate-chart-enhanced .recharts-surface {
+  cursor: crosshair;
+}
+
+/* Enhanced grid lines */
+.bitrate-chart-enhanced .recharts-cartesian-grid-horizontal line,
+.bitrate-chart-enhanced .recharts-cartesian-grid-vertical line {
+  stroke: #3E4A5C;
+  stroke-opacity: 0.6;
+}
+
+/* Axis styling */
+.bitrate-chart-enhanced .recharts-xAxis,
+.bitrate-chart-enhanced .recharts-yAxis {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Reference line label */
+.bitrate-chart-enhanced .recharts-label {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-weight: 500;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .bitrate-chart-enhanced {
+    padding: 15px;
+  }
+
+  .bitrate-chart-enhanced h3 {
+    font-size: 16px;
+  }
+
+  .reset-zoom-btn {
+    padding: 6px 12px;
+    font-size: 11px;
+  }
+}
