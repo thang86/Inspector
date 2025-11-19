@@ -3,12 +3,12 @@ FROM node:18-alpine as build
 WORKDIR /app
 
 # Copy package files
-COPY ui-app/package.json ./
+COPY deploy/ui-app/package.json ./
 RUN npm install
 
 # Copy source
-COPY ui-app/public ./public
-COPY ui-app/src ./src
+COPY deploy/ui-app/public ./public
+COPY deploy/ui-app/src ./src
 
 # Build
 RUN npm run build

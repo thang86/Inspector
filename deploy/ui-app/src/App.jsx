@@ -4,6 +4,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import './Dashboard.css';
+import { useToast } from './hooks';
+import Toast from './components/Toast';
 
 const API_BASE = '/api/v1';
 
@@ -19,6 +21,7 @@ const Dashboard = () => {
   const [debugInfo, setDebugInfo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState({ tier: null, is_4k: null });
+  const toast = useToast();
 
   useEffect(() => {
     fetchChannels();
@@ -182,6 +185,7 @@ const Dashboard = () => {
             inputs={inputs}
             loading={loading}
             onRefresh={fetchInputs}
+            toast={toast}
           />
         )}
 
@@ -202,6 +206,8 @@ const Dashboard = () => {
           />
         )}
       </div>
+
+      <Toast toasts={toast.toasts} onRemove={toast.removeToast} />
     </div>
   );
 };
@@ -1310,7 +1316,7 @@ const QoEMetric = ({ label, value, description, severity }) => (
 // INPUTS TAB
 // ============================================================================
 
-const InputsTab = ({ inputs, loading, onRefresh }) => {
+const InputsTab = ({ inputs, loading, onRefresh, toast }) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
@@ -1335,13 +1341,14 @@ const InputsTab = ({ inputs, loading, onRefresh }) => {
         method: 'DELETE'
       });
       if (response.ok) {
+        toast.success('Input deleted successfully');
         onRefresh();
       } else {
-        alert('Failed to delete input');
+        toast.error('Failed to delete input');
       }
     } catch (error) {
       console.error('Error deleting input:', error);
-      alert('Error deleting input');
+      toast.error('Error deleting input: ' + error.message);
     }
   };
 
@@ -1430,6 +1437,7 @@ const InputsTab = ({ inputs, loading, onRefresh }) => {
 
       {showAddModal && (
         <InputFormModal
+          toast={toast}
           onClose={() => setShowAddModal(false)}
           onSuccess={() => {
             setShowAddModal(false);
@@ -1441,6 +1449,7 @@ const InputsTab = ({ inputs, loading, onRefresh }) => {
       {showEditModal && selectedInput && (
         <InputFormModal
           input={selectedInput}
+          toast={toast}
           onClose={() => {
             setShowEditModal(false);
             setSelectedInput(null);
@@ -1470,7 +1479,7 @@ const InputsTab = ({ inputs, loading, onRefresh }) => {
 // INPUT FORM MODAL (Add/Edit)
 // ============================================================================
 
-const InputFormModal = ({ input, onClose, onSuccess }) => {
+const InputFormModal = ({ input, toast, onClose, onSuccess }) => {
   const isEdit = !!input;
   const [formData, setFormData] = useState(input || {
     input_name: '',
@@ -1499,14 +1508,15 @@ const InputFormModal = ({ input, onClose, onSuccess }) => {
       });
 
       if (response.ok) {
+        toast.success(isEdit ? 'Input updated successfully' : 'Input added successfully');
         onSuccess();
       } else {
         const data = await response.json();
-        alert(`Error: ${data.message}`);
+        toast.error(`Error: ${data.message}`);
       }
     } catch (error) {
       console.error('Error saving input:', error);
-      alert('Error saving input');
+      toast.error('Error saving input: ' + error.message);
     }
   };
 
