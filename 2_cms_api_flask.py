@@ -591,6 +591,8 @@ def get_inputs():
     """Get all inputs with optional filters and channel names"""
     probe_id = request.args.get('probe_id', type=int)
     channel_id = request.args.get('channel_id', type=int)
+    # Default to showing only enabled inputs unless explicitly requesting all
+    show_all = request.args.get('all', type=lambda x: x.lower() == 'true', default=False)
     enabled = request.args.get('enabled', type=lambda x: x.lower() == 'true', default=None)
 
     query = Input.query
@@ -601,7 +603,10 @@ def get_inputs():
     if channel_id:
         query = query.filter_by(channel_id=channel_id)
 
-    if enabled is not None:
+    # If not showing all and enabled not explicitly set, default to enabled only
+    if not show_all and enabled is None:
+        query = query.filter_by(enabled=True)
+    elif enabled is not None:
         query = query.filter_by(enabled=enabled)
 
     inputs = query.all()
@@ -656,17 +661,36 @@ def create_input():
             return jsonify({'status': 'error', 'message': f'Missing field: {field}'}), 400
 
     try:
+        # Convert empty strings to None for numeric fields
+        channel_id = data.get('channel_id')
+        if channel_id == '' or channel_id is None:
+            channel_id = None
+        else:
+            channel_id = int(channel_id)
+
+        bitrate_mbps = data.get('bitrate_mbps')
+        if bitrate_mbps == '' or bitrate_mbps is None:
+            bitrate_mbps = None
+        else:
+            bitrate_mbps = float(bitrate_mbps)
+
+        input_port = data.get('input_port')
+        if input_port == '' or input_port is None:
+            input_port = None
+        else:
+            input_port = int(input_port)
+
         inp = Input(
             input_name=data['input_name'],
             input_url=data['input_url'],
             input_type=data['input_type'],
             input_protocol=data.get('input_protocol'),
-            input_port=data.get('input_port'),
-            channel_id=data.get('channel_id'),
+            input_port=input_port,
+            channel_id=channel_id,
             probe_id=data['probe_id'],
             is_primary=data.get('is_primary', True),
             enabled=data.get('enabled', True),
-            bitrate_mbps=data.get('bitrate_mbps'),
+            bitrate_mbps=bitrate_mbps,
             input_metadata=data.get('input_metadata')
         )
 
@@ -698,10 +722,33 @@ def update_input(input_id):
     data = request.get_json()
 
     try:
-        for key in ['input_name', 'input_url', 'input_type', 'input_protocol', 'input_port',
-                    'channel_id', 'probe_id', 'is_primary', 'enabled', 'bitrate_mbps', 'input_metadata']:
+        # Update fields with empty string handling for numeric fields
+        for key in ['input_name', 'input_url', 'input_type', 'input_protocol', 'input_metadata']:
             if key in data:
                 setattr(inp, key, data[key])
+
+        # Handle numeric fields - convert empty strings to None
+        if 'channel_id' in data:
+            val = data['channel_id']
+            inp.channel_id = None if val == '' or val is None else int(val)
+
+        if 'probe_id' in data:
+            val = data['probe_id']
+            inp.probe_id = None if val == '' or val is None else int(val)
+
+        if 'input_port' in data:
+            val = data['input_port']
+            inp.input_port = None if val == '' or val is None else int(val)
+
+        if 'bitrate_mbps' in data:
+            val = data['bitrate_mbps']
+            inp.bitrate_mbps = None if val == '' or val is None else float(val)
+
+        # Handle boolean fields
+        if 'is_primary' in data:
+            inp.is_primary = data['is_primary']
+        if 'enabled' in data:
+            inp.enabled = data['enabled']
 
         inp.updated_at = datetime.utcnow()
         db.session.commit()
@@ -809,7 +856,8 @@ def debug_system():
     """Debug endpoint for system information"""
     try:
         # Test database connection
-        db.session.execute('SELECT 1')
+        from sqlalchemy import text
+        db.session.execute(text('SELECT 1'))
 
         # Count records
         channel_count = Channel.query.count()
