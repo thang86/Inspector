@@ -1562,6 +1562,7 @@ table {
    ============================================================================ */
 
 /* Codec Panel */
+/* Codec Panel - Enhanced */
 .codec-panel {
   background: linear-gradient(135deg, #1e2530 0%, #252d3a 100%);
   border: 1px solid rgba(0, 255, 255, 0.15);
@@ -1570,56 +1571,306 @@ table {
   margin-bottom: 20px;
 }
 
-.codec-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  gap: 20px;
-  margin-top: 15px;
-}
-
-.codec-section h4 {
+.codec-panel > h3 {
   color: #00E5FF;
-  font-size: 16px;
-  margin-bottom: 12px;
-  border-bottom: 2px solid rgba(0, 229, 255, 0.3);
-  padding-bottom: 8px;
-}
-
-.codec-info {
+  font-size: 20px;
+  margin-bottom: 15px;
+  text-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 10px;
 }
 
-.codec-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 6px;
+/* Snapshot Panel */
+.snapshot-panel {
+  background: linear-gradient(135deg, #1e2530 0%, #252d3a 100%);
+  border: 1px solid rgba(0, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
 }
 
-.codec-item .label {
+.snapshot-panel h3 {
+  color: #00E5FF;
+  font-size: 18px;
+  margin-bottom: 15px;
+  text-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
+}
+
+.snapshot-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+}
+
+.stream-snapshot {
+  max-width: 100%;
+  width: 100%;
+  max-height: 480px;
+  height: auto;
+  border-radius: 8px;
+  border: 2px solid rgba(0, 229, 255, 0.2);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  transition: all 0.3s ease;
+  object-fit: contain;
+  background: #0a0e17;
+}
+
+.stream-snapshot:hover {
+  border-color: rgba(0, 229, 255, 0.5);
+  box-shadow: 0 6px 30px rgba(0, 229, 255, 0.2);
+  transform: scale(1.01);
+}
+
+.snapshot-timestamp {
   color: #8B95A5;
   font-size: 13px;
   font-weight: 500;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  border: 1px solid rgba(139, 149, 165, 0.2);
 }
 
-.codec-item .value {
+/* Enhanced Codec Panel */
+.codec-main-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+  gap: 25px;
+  margin-top: 20px;
+}
+
+.codec-section {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 10px;
+  padding: 20px;
+  border: 1px solid rgba(0, 229, 255, 0.1);
+}
+
+.codec-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid rgba(0, 229, 255, 0.2);
+}
+
+.codec-header h4 {
+  color: #00E5FF;
+  font-size: 18px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.codec-badge-large {
+  color: #0a0e17;
+  padding: 8px 18px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.codec-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.codec-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  border-left: 3px solid rgba(0, 229, 255, 0.3);
+}
+
+.detail-label {
+  color: #8B95A5;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.detail-value {
   color: #E2E8F0;
   font-size: 14px;
   font-weight: 600;
 }
 
-.codec-badge {
-  background: linear-gradient(135deg, #00E5FF 0%, #00B8D4 100%);
-  color: #0a0e17;
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 700;
+.codec-specs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.spec-item {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 15px;
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.05) 0%, rgba(0, 229, 255, 0.02) 100%);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 229, 255, 0.15);
+  transition: all 0.3s ease;
+}
+
+.spec-item:hover {
+  border-color: rgba(0, 229, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 229, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+.spec-icon {
+  font-size: 32px;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.spec-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.spec-label {
+  color: #8B95A5;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.spec-value {
+  color: #00E5FF;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.spec-detail {
+  color: #A0AEC0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Codec Comparison Section */
+.codec-comparison-section {
+  margin-top: 30px;
+  padding-top: 25px;
+  border-top: 2px solid rgba(0, 229, 255, 0.2);
+}
+
+.codec-comparison-section h4 {
+  color: #00E5FF;
+  font-size: 18px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.comparison-tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
+  gap: 25px;
+}
+
+.comparison-table {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+  padding: 20px;
+  border: 1px solid rgba(0, 229, 255, 0.1);
+}
+
+.comparison-table h5 {
+  color: #00D9A3;
+  font-size: 16px;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid rgba(0, 217, 163, 0.2);
+}
+
+.comparison-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.comparison-table thead {
+  background: rgba(0, 229, 255, 0.1);
+}
+
+.comparison-table th {
+  padding: 12px 10px;
+  text-align: left;
+  color: #00E5FF;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid rgba(0, 229, 255, 0.3);
+}
+
+.comparison-table td {
+  padding: 12px 10px;
+  color: #E2E8F0;
+  border-bottom: 1px solid rgba(139, 149, 165, 0.1);
+}
+
+.comparison-table tbody tr {
+  transition: all 0.2s ease;
+}
+
+.comparison-table tbody tr:hover {
+  background: rgba(0, 229, 255, 0.05);
+}
+
+.comparison-table tbody tr.current-codec {
+  background: rgba(0, 229, 255, 0.15);
+  border-left: 4px solid #00E5FF;
+}
+
+.comparison-table tbody tr.current-codec td {
+  font-weight: 600;
+}
+
+.comparison-table tbody tr.current-codec td:first-child {
+  color: #00E5FF;
+}
+
+@media (max-width: 1400px) {
+  .codec-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .comparison-tables {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .codec-details-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .comparison-table {
+    overflow-x: auto;
+  }
+
+  .comparison-table table {
+    min-width: 600px;
+  }
 }
 
 /* MOS Panel */

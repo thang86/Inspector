@@ -612,68 +612,406 @@ const CustomBitrateTooltip = ({ active, payload }) => {
 };
 
 // ============================================================================
-// CODEC PANEL
+// CODEC PANEL - ENHANCED WITH COMPARISONS
 // ============================================================================
 
 const CodecPanel = ({ codecInfo }) => {
   if (!codecInfo) return null;
 
+  // Video codec details and comparison data
+  const getVideoCodecDetails = (codec) => {
+    const codecName = codec?.toLowerCase() || 'unknown';
+    const details = {
+      'h264': {
+        fullName: 'H.264 (AVC)',
+        generation: '4th Gen',
+        efficiency: 'Baseline',
+        compression: '1x',
+        year: '2003',
+        usage: 'Universal compatibility',
+        color: '#00D9A3'
+      },
+      'hevc': {
+        fullName: 'H.265 (HEVC)',
+        generation: '5th Gen',
+        efficiency: 'High',
+        compression: '2x better than H.264',
+        year: '2013',
+        usage: '4K/8K streaming',
+        color: '#00E5FF'
+      },
+      'h265': {
+        fullName: 'H.265 (HEVC)',
+        generation: '5th Gen',
+        efficiency: 'High',
+        compression: '2x better than H.264',
+        year: '2013',
+        usage: '4K/8K streaming',
+        color: '#00E5FF'
+      },
+      'av1': {
+        fullName: 'AV1',
+        generation: '6th Gen',
+        efficiency: 'Very High',
+        compression: '30% better than HEVC',
+        year: '2018',
+        usage: 'Next-gen streaming',
+        color: '#A78BFA'
+      },
+      'vp9': {
+        fullName: 'VP9',
+        generation: '5th Gen',
+        efficiency: 'High',
+        compression: 'Similar to HEVC',
+        year: '2013',
+        usage: 'YouTube, WebRTC',
+        color: '#F59E0B'
+      },
+      'mpeg2video': {
+        fullName: 'MPEG-2',
+        generation: '2nd Gen',
+        efficiency: 'Low',
+        compression: 'Legacy',
+        year: '1995',
+        usage: 'Broadcast TV, DVD',
+        color: '#8B95A5'
+      }
+    };
+    return details[codecName] || {
+      fullName: codec?.toUpperCase() || 'Unknown',
+      generation: 'N/A',
+      efficiency: 'Unknown',
+      compression: 'N/A',
+      year: 'N/A',
+      usage: 'Unknown',
+      color: '#6B7785'
+    };
+  };
+
+  // Audio codec details and comparison data
+  const getAudioCodecDetails = (codec) => {
+    const codecName = codec?.toLowerCase() || 'unknown';
+    const details = {
+      'aac': {
+        fullName: 'AAC (Advanced Audio Coding)',
+        profile: 'LC/HE/HEv2',
+        channels: 'Up to 48',
+        quality: 'High',
+        bitrate: '96-320 kbps',
+        usage: 'Streaming, broadcasting',
+        color: '#00D9A3'
+      },
+      'ac3': {
+        fullName: 'AC-3 (Dolby Digital)',
+        profile: '5.1 Surround',
+        channels: 'Up to 5.1',
+        quality: 'Good',
+        bitrate: '192-640 kbps',
+        usage: 'DVD, Blu-ray, broadcast',
+        color: '#00E5FF'
+      },
+      'eac3': {
+        fullName: 'E-AC-3 (Dolby Digital Plus)',
+        profile: '7.1 Surround',
+        channels: 'Up to 15.1',
+        quality: 'Very High',
+        bitrate: '32-6144 kbps',
+        usage: 'Streaming, Blu-ray',
+        color: '#A78BFA'
+      },
+      'opus': {
+        fullName: 'Opus',
+        profile: 'Interactive',
+        channels: 'Up to 255',
+        quality: 'Excellent',
+        bitrate: '6-510 kbps',
+        usage: 'WebRTC, gaming, VoIP',
+        color: '#F59E0B'
+      },
+      'mp3': {
+        fullName: 'MP3 (MPEG-1 Audio Layer III)',
+        profile: 'Stereo',
+        channels: 'Up to 2',
+        quality: 'Good',
+        bitrate: '128-320 kbps',
+        usage: 'Legacy audio',
+        color: '#8B95A5'
+      },
+      'mp2': {
+        fullName: 'MP2 (MPEG-1 Audio Layer II)',
+        profile: 'Broadcast',
+        channels: 'Up to 2',
+        quality: 'Fair',
+        bitrate: '192-384 kbps',
+        usage: 'DVB broadcast',
+        color: '#6B7785'
+      }
+    };
+    return details[codecName] || {
+      fullName: codec?.toUpperCase() || 'Unknown',
+      profile: 'N/A',
+      channels: 'N/A',
+      quality: 'Unknown',
+      bitrate: 'N/A',
+      usage: 'Unknown',
+      color: '#6B7785'
+    };
+  };
+
+  // Resolution details
+  const getResolutionDetails = (resolution) => {
+    const resMap = {
+      '1920x1080': { name: 'Full HD', pixels: '2.1 MP', aspect: '16:9', category: 'HD' },
+      '1280x720': { name: 'HD', pixels: '0.9 MP', aspect: '16:9', category: 'HD' },
+      '3840x2160': { name: '4K UHD', pixels: '8.3 MP', aspect: '16:9', category: '4K' },
+      '7680x4320': { name: '8K UHD', pixels: '33.2 MP', aspect: '16:9', category: '8K' },
+      '720x576': { name: 'PAL SD', pixels: '0.4 MP', aspect: '4:3', category: 'SD' },
+      '720x480': { name: 'NTSC SD', pixels: '0.3 MP', aspect: '4:3', category: 'SD' }
+    };
+    return resMap[resolution] || { name: resolution || 'Unknown', pixels: 'N/A', aspect: 'N/A', category: 'N/A' };
+  };
+
+  const videoDetails = getVideoCodecDetails(codecInfo.video_codec);
+  const audioDetails = getAudioCodecDetails(codecInfo.audio_codec);
+  const resolutionDetails = getResolutionDetails(codecInfo.video_resolution);
+
   return (
     <div className="codec-panel">
-      <h3>Stream Codec Information</h3>
+      <h3>🎬 Stream Codec Information</h3>
 
-      <div className="codec-grid">
-        {/* Video Codec */}
-        <div className="codec-section">
-          <h4>Video Codec</h4>
-          <div className="codec-info">
-            <div className="codec-item">
-              <span className="label">Codec:</span>
-              <span className="value codec-badge">{codecInfo.video_codec?.toUpperCase() || 'UNKNOWN'}</span>
+      <div className="codec-main-grid">
+        {/* Video Codec Section */}
+        <div className="codec-section video-section">
+          <div className="codec-header">
+            <h4>📺 Video Codec</h4>
+            <span className="codec-badge-large" style={{ background: videoDetails.color }}>
+              {videoDetails.fullName}
+            </span>
+          </div>
+
+          <div className="codec-details-grid">
+            <div className="codec-detail-item">
+              <span className="detail-label">Codec Family:</span>
+              <span className="detail-value">{codecInfo.video_codec?.toUpperCase() || 'Unknown'}</span>
             </div>
-            <div className="codec-item">
-              <span className="label">Profile:</span>
-              <span className="value">{codecInfo.video_profile || 'Unknown'}</span>
+            <div className="codec-detail-item">
+              <span className="detail-label">Generation:</span>
+              <span className="detail-value">{videoDetails.generation}</span>
             </div>
-            <div className="codec-item">
-              <span className="label">Level:</span>
-              <span className="value">{codecInfo.video_level || 'Unknown'}</span>
+            <div className="codec-detail-item">
+              <span className="detail-label">Compression:</span>
+              <span className="detail-value">{videoDetails.compression}</span>
             </div>
-            <div className="codec-item">
-              <span className="label">Resolution:</span>
-              <span className="value">{codecInfo.video_resolution || 'Unknown'}</span>
+            <div className="codec-detail-item">
+              <span className="detail-label">Efficiency:</span>
+              <span className="detail-value">{videoDetails.efficiency}</span>
             </div>
-            <div className="codec-item">
-              <span className="label">Frame Rate:</span>
-              <span className="value">{codecInfo.video_fps || 'Unknown'} fps</span>
+            <div className="codec-detail-item">
+              <span className="detail-label">Profile:</span>
+              <span className="detail-value">{codecInfo.video_profile || 'Unknown'}</span>
             </div>
-            <div className="codec-item">
-              <span className="label">Bitrate:</span>
-              <span className="value">{codecInfo.video_bitrate_kbps?.toFixed(0) || 0} kbps</span>
+            <div className="codec-detail-item">
+              <span className="detail-label">Level:</span>
+              <span className="detail-value">{codecInfo.video_level || 'Unknown'}</span>
+            </div>
+            <div className="codec-detail-item">
+              <span className="detail-label">Standard Year:</span>
+              <span className="detail-value">{videoDetails.year}</span>
+            </div>
+            <div className="codec-detail-item">
+              <span className="detail-label">Common Usage:</span>
+              <span className="detail-value">{videoDetails.usage}</span>
+            </div>
+          </div>
+
+          <div className="codec-specs">
+            <div className="spec-item">
+              <div className="spec-icon">📐</div>
+              <div className="spec-content">
+                <div className="spec-label">Resolution</div>
+                <div className="spec-value">{codecInfo.video_resolution || 'Unknown'}</div>
+                <div className="spec-detail">{resolutionDetails.name} • {resolutionDetails.pixels} • {resolutionDetails.aspect}</div>
+              </div>
+            </div>
+            <div className="spec-item">
+              <div className="spec-icon">🎞️</div>
+              <div className="spec-content">
+                <div className="spec-label">Frame Rate</div>
+                <div className="spec-value">{codecInfo.video_fps || 'Unknown'} fps</div>
+                <div className="spec-detail">{parseFloat(codecInfo.video_fps) >= 50 ? 'High frame rate' : 'Standard'}</div>
+              </div>
+            </div>
+            <div className="spec-item">
+              <div className="spec-icon">💾</div>
+              <div className="spec-content">
+                <div className="spec-label">Video Bitrate</div>
+                <div className="spec-value">{codecInfo.video_bitrate_kbps?.toFixed(0) || 0} kbps</div>
+                <div className="spec-detail">{(codecInfo.video_bitrate_kbps / 1000).toFixed(2)} Mbps</div>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Audio Codec */}
-        <div className="codec-section">
-          <h4>Audio Codec</h4>
-          <div className="codec-info">
-            <div className="codec-item">
-              <span className="label">Codec:</span>
-              <span className="value codec-badge">{codecInfo.audio_codec?.toUpperCase() || 'UNKNOWN'}</span>
+        {/* Audio Codec Section */}
+        <div className="codec-section audio-section">
+          <div className="codec-header">
+            <h4>🔊 Audio Codec</h4>
+            <span className="codec-badge-large" style={{ background: audioDetails.color }}>
+              {audioDetails.fullName}
+            </span>
+          </div>
+
+          <div className="codec-details-grid">
+            <div className="codec-detail-item">
+              <span className="detail-label">Codec Family:</span>
+              <span className="detail-value">{codecInfo.audio_codec?.toUpperCase() || 'Unknown'}</span>
             </div>
-            <div className="codec-item">
-              <span className="label">Channels:</span>
-              <span className="value">{codecInfo.audio_channels || 'Unknown'}</span>
+            <div className="codec-detail-item">
+              <span className="detail-label">Profile:</span>
+              <span className="detail-value">{audioDetails.profile}</span>
             </div>
-            <div className="codec-item">
-              <span className="label">Sample Rate:</span>
-              <span className="value">{codecInfo.audio_sample_rate || 'Unknown'}</span>
+            <div className="codec-detail-item">
+              <span className="detail-label">Quality:</span>
+              <span className="detail-value">{audioDetails.quality}</span>
             </div>
-            <div className="codec-item">
-              <span className="label">Bitrate:</span>
-              <span className="value">{codecInfo.audio_bitrate_kbps?.toFixed(0) || 0} kbps</span>
+            <div className="codec-detail-item">
+              <span className="detail-label">Max Channels:</span>
+              <span className="detail-value">{audioDetails.channels}</span>
             </div>
+            <div className="codec-detail-item">
+              <span className="detail-label">Typical Bitrate:</span>
+              <span className="detail-value">{audioDetails.bitrate}</span>
+            </div>
+            <div className="codec-detail-item">
+              <span className="detail-label">Common Usage:</span>
+              <span className="detail-value">{audioDetails.usage}</span>
+            </div>
+          </div>
+
+          <div className="codec-specs">
+            <div className="spec-item">
+              <div className="spec-icon">🎵</div>
+              <div className="spec-content">
+                <div className="spec-label">Channels</div>
+                <div className="spec-value">{codecInfo.audio_channels || 'Unknown'}</div>
+                <div className="spec-detail">{codecInfo.audio_channels === 'stereo' ? '2.0 Stereo' : codecInfo.audio_channels}</div>
+              </div>
+            </div>
+            <div className="spec-item">
+              <div className="spec-icon">📊</div>
+              <div className="spec-content">
+                <div className="spec-label">Sample Rate</div>
+                <div className="spec-value">{codecInfo.audio_sample_rate || 'Unknown'}</div>
+                <div className="spec-detail">{parseInt(codecInfo.audio_sample_rate) >= 48000 ? 'Professional' : 'Standard'}</div>
+              </div>
+            </div>
+            <div className="spec-item">
+              <div className="spec-icon">💿</div>
+              <div className="spec-content">
+                <div className="spec-label">Audio Bitrate</div>
+                <div className="spec-value">{codecInfo.audio_bitrate_kbps?.toFixed(0) || 0} kbps</div>
+                <div className="spec-detail">{codecInfo.audio_bitrate_kbps >= 256 ? 'High quality' : codecInfo.audio_bitrate_kbps >= 128 ? 'Good quality' : 'Standard'}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Codec Comparison Tables */}
+      <div className="codec-comparison-section">
+        <h4>📊 Codec Technology Comparison</h4>
+
+        <div className="comparison-tables">
+          {/* Video Codecs Comparison */}
+          <div className="comparison-table">
+            <h5>Video Codecs</h5>
+            <table>
+              <thead>
+                <tr>
+                  <th>Codec</th>
+                  <th>Generation</th>
+                  <th>Compression</th>
+                  <th>Efficiency</th>
+                  <th>Best For</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className={codecInfo.video_codec?.toLowerCase() === 'h264' ? 'current-codec' : ''}>
+                  <td><strong>H.264 (AVC)</strong></td>
+                  <td>4th Gen (2003)</td>
+                  <td>Baseline (1x)</td>
+                  <td>Standard</td>
+                  <td>Universal compatibility</td>
+                </tr>
+                <tr className={codecInfo.video_codec?.toLowerCase() === 'hevc' || codecInfo.video_codec?.toLowerCase() === 'h265' ? 'current-codec' : ''}>
+                  <td><strong>H.265 (HEVC)</strong></td>
+                  <td>5th Gen (2013)</td>
+                  <td>2x better</td>
+                  <td>High</td>
+                  <td>4K/8K streaming</td>
+                </tr>
+                <tr className={codecInfo.video_codec?.toLowerCase() === 'av1' ? 'current-codec' : ''}>
+                  <td><strong>AV1</strong></td>
+                  <td>6th Gen (2018)</td>
+                  <td>30% better than HEVC</td>
+                  <td>Very High</td>
+                  <td>Next-gen streaming</td>
+                </tr>
+                <tr className={codecInfo.video_codec?.toLowerCase() === 'vp9' ? 'current-codec' : ''}>
+                  <td><strong>VP9</strong></td>
+                  <td>5th Gen (2013)</td>
+                  <td>Similar to HEVC</td>
+                  <td>High</td>
+                  <td>YouTube, WebRTC</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Audio Codecs Comparison */}
+          <div className="comparison-table">
+            <h5>Audio Codecs</h5>
+            <table>
+              <thead>
+                <tr>
+                  <th>Codec</th>
+                  <th>Max Channels</th>
+                  <th>Bitrate Range</th>
+                  <th>Quality</th>
+                  <th>Best For</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className={codecInfo.audio_codec?.toLowerCase() === 'aac' ? 'current-codec' : ''}>
+                  <td><strong>AAC</strong></td>
+                  <td>Up to 48</td>
+                  <td>96-320 kbps</td>
+                  <td>High</td>
+                  <td>Streaming, broadcast</td>
+                </tr>
+                <tr className={codecInfo.audio_codec?.toLowerCase() === 'ac3' ? 'current-codec' : ''}>
+                  <td><strong>AC-3 (DD)</strong></td>
+                  <td>5.1</td>
+                  <td>192-640 kbps</td>
+                  <td>Good</td>
+                  <td>DVD, broadcast</td>
+                </tr>
+                <tr className={codecInfo.audio_codec?.toLowerCase() === 'eac3' ? 'current-codec' : ''}>
+                  <td><strong>E-AC-3 (DD+)</strong></td>
+                  <td>15.1</td>
+                  <td>32-6144 kbps</td>
+                  <td>Very High</td>
+                  <td>Streaming, Blu-ray</td>
+                </tr>
+                <tr className={codecInfo.audio_codec?.toLowerCase() === 'opus' ? 'current-codec' : ''}>
+                  <td><strong>Opus</strong></td>
+                  <td>255</td>
+                  <td>6-510 kbps</td>
+                  <td>Excellent</td>
+                  <td>WebRTC, VoIP</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -1038,6 +1376,28 @@ const MetricsTab = () => {
           {/* Stream Status Overview */}
           {inputStatus && (
             <StreamStatusPanel status={inputStatus} />
+          )}
+
+          {/* Stream Snapshot */}
+          {selectedInput && (
+            <div className="snapshot-panel">
+              <h3>Stream Snapshot - {selectedInputName}</h3>
+              <div className="snapshot-container">
+                <img
+                  src={`${API_BASE}/inputs/${selectedInput}/snapshot`}
+                  alt={`Snapshot of ${selectedInputName}`}
+                  className="stream-snapshot"
+                  onError={(e) => {
+                    e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="640" height="360"%3E%3Crect fill="%231e2530" width="640" height="360"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" fill="%238B95A5" font-family="monospace"%3ENo snapshot available%3C/text%3E%3C/svg%3E';
+                  }}
+                />
+                {inputStatus?.last_snapshot && (
+                  <div className="snapshot-timestamp">
+                    Last captured: {new Date(inputStatus.last_snapshot).toLocaleString()}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {/* TR 101 290 DVB Errors */}
